@@ -56,9 +56,11 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [credits, setCredits] = useState(0)
   const [authView, setAuthView] = useState<'login' | 'app'>('login')
+  const [authTab, setAuthTab] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
-  const [authSent, setAuthSent] = useState(false)
   const [photos, setPhotos] = useState<{ file: File; preview: string }[]>([])
   const [poolVolume, setPoolVolume] = useState<number>(50)
   const [volumeSet, setVolumeSet] = useState(false)
@@ -73,7 +75,7 @@ export default function Home() {
   const [history, setHistory] = useState<SavedAnalysis[]>([])
   const [dbHistory, setDbHistory] = useState<any[]>([])
   const [view, setView] = useState<'analyze' | 'history' | 'account'>('analyze')
-  const [selectedAnalysis, setSelectedAnalysis] = useState<SavedAnalysis | null>(null)
+  const [selectedAnalysis, setSelectedAnalysis] = useState<any>(null)
   const [currentPhotoSlot, setCurrentPhotoSlot] = useState<number>(0)
   const [openSections, setOpenSections] = useState<string[]>(['score', 'action_0'])
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
@@ -104,22 +106,12 @@ export default function Home() {
         setAuthView('login')
       }
     })
-
     try {
       const saved = localStorage.getItem('pool_analyses')
       if (saved) setHistory(JSON.parse(saved))
       const vol = localStorage.getItem('pool_volume')
       if (vol) { setPoolVolume(parseInt(vol)); setVolumeSet(true) }
     } catch {}
-
-    const url = new URL(window.location.href)
-    if (url.searchParams.get('success') === 'true') {
-      setTimeout(() => {
-        if (user) fetchCredits(user.id)
-        window.history.replaceState({}, '', '/')
-      }, 2000)
-    }
-
     return () => subscription.unsubscribe()
   }, [])
 
@@ -139,15 +131,23 @@ export default function Home() {
     if (data) setDbHistory(data)
   }
 
-  async function signIn() {
+  async function handleAuth() {
+    if (!email || !authPassword) return
     setAuthLoading(true)
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/` }
-    })
-    if (error) alert(error.message)
-    else setAuthSent(true)
-    setAuthLoading(false)
+    setAuthError('')
+    try {
+      if (authTab === 'signup') {
+        const { error } = await supabase.auth.signUp({ email, password: authPassword })
+        if (error) { setAuthError(error.message); return }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password: authPassword })
+        if (error) { setAuthError('Email ou mot de passe incorrect'); return }
+      }
+    } catch {
+      setAuthError('Erreur de connexion')
+    } finally {
+      setAuthLoading(false)
+    }
   }
 
   async function signOut() {
@@ -156,6 +156,7 @@ export default function Home() {
     setAuthView('login')
     setResult(null)
     setCredits(0)
+    setDbHistory([])
   }
 
   function startLoadingAnimation() {
@@ -245,13 +246,10 @@ export default function Home() {
     const newAnalysis: SavedAnalysis = {
       id: Date.now().toString(),
       date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      score: diagnostic.score_global,
-      etat: diagnostic.etat,
-      resume: diagnostic.resume,
+      score: diagnostic.score_global, etat: diagnostic.etat, resume: diagnostic.resume,
       problemes: diagnostic.problemes_detectes || [],
       diagnostic, weather: weatherData, location: locationData, photoMeta: metaData,
-      photoPreview: photos[0]?.preview || '',
-      poolVolume, photoCount: photos.length
+      photoPreview: photos[0]?.preview || '', poolVolume, photoCount: photos.length
     }
     const updated = [newAnalysis, ...history].slice(0, 20)
     setHistory(updated)
@@ -296,8 +294,7 @@ export default function Home() {
       if (!res.ok) {
         if (data.code === 'NO_CREDITS') setShowBuyCredits(true)
         else setError(data.error || 'Erreur')
-        setLoading(false)
-        return
+        setLoading(false); return
       }
 
       setResult(data.diagnostic)
@@ -306,19 +303,14 @@ export default function Home() {
       setPhotoMeta(data.photoMeta)
       setOpenSections(['score', 'context', 'action_0'])
 
-      if (user) {
-        fetchCredits(user.id)
-        fetchDbHistory(user.id)
-      } else {
-        saveLocalAnalysis(data.diagnostic, data.weather, data.location, data.photoMeta)
-      }
+      if (user) { fetchCredits(user.id); fetchDbHistory(user.id) }
+      else saveLocalAnalysis(data.diagnostic, data.weather, data.location, data.photoMeta)
     } catch { setError('Erreur de connexion') }
     finally { setLoading(false) }
   }
 
   async function analyzeFollowUp(actionIndex: number) {
     if (!followUpPhoto) return
-    const action = result.plan_action[actionIndex]
     setFollowUps(prev => prev.map((f, i) => i === actionIndex ? { ...f, status: 'analyzing' } : f))
     try {
       const formData = new FormData()
@@ -359,7 +351,8 @@ export default function Home() {
       body: JSON.stringify({ packId, userId: user.id, userEmail: user.email })
     })
     const { url } = await res.json()
-    window.location.href = url
+    if (url) window.location.href = url
+    else alert('Paiement non configuré pour l\'instant')
   }
 
   const getColor = (etat: string) => ({ excellent: '#22c55e', bon: '#84cc16', attention: '#f59e0b', urgent: '#ef4444' }[etat] || '#6b7280')
@@ -491,8 +484,8 @@ export default function Home() {
       {(w || l || m) && (
         <Accordion id="context" emoji="🌤️" title="Contexte & météo">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {l && <div style={{ padding: '10px', background: '#f8fafc', borderRadius: '8px' }}><span>📍 {l.city}, {l.country}</span></div>}
-            {m && <div style={{ padding: '10px', background: '#f8fafc', borderRadius: '8px' }}><span>🕐 Photo le {m.date} à {m.heure} ({m.momentJournee})</span></div>}
+            {l && <div style={{ padding: '10px', background: '#f8fafc', borderRadius: '8px', fontSize: '14px', color: '#374151' }}>📍 {l.city}, {l.country}</div>}
+            {m && <div style={{ padding: '10px', background: '#f8fafc', borderRadius: '8px', fontSize: '14px', color: '#374151' }}>🕐 Photo le {m.date} à {m.heure} ({m.momentJournee})</div>}
             {w && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <div style={{ padding: '10px', background: '#fef3c7', borderRadius: '8px', textAlign: 'center' }}>
@@ -560,44 +553,53 @@ export default function Home() {
     </div>
   )
 
-  // ECRAN LOGIN
+  // ===== ECRAN LOGIN =====
   if (authView === 'login') return (
     <main style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0c4a6e 0%, #0369a1 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ width: '100%', maxWidth: '400px' }}>
+
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{ fontSize: '64px', marginBottom: '12px' }}>🏊</div>
-          <h1 style={{ fontSize: '32px', fontWeight: '800', color: 'white', margin: '0 0 8px' }}>Pool Water AI</h1>
+          <h1 style={{ fontSize: '32px', fontWeight: '800', color: 'white', margin: '0 0 8px' }}>Pooltester.app</h1>
           <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '16px', margin: 0 }}>Diagnostic IA de votre eau de piscine</p>
         </div>
 
         <div style={{ background: 'white', borderRadius: '20px', padding: '32px' }}>
-          {!authSent ? (
-            <>
-              <h2 style={{ margin: '0 0 6px', color: '#0c4a6e', fontSize: '20px', fontWeight: '700' }}>Connexion</h2>
-              <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: '14px' }}>Recevez un lien magique par email</p>
-              <input type="email" placeholder="votre@email.com" value={email}
-                onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && signIn()}
-                style={{ width: '100%', padding: '14px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '16px', boxSizing: 'border-box', marginBottom: '12px', outline: 'none' }} />
-              <button onClick={signIn} disabled={authLoading || !email}
-                style={{ width: '100%', padding: '14px', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '700', cursor: 'pointer', marginBottom: '16px' }}>
-                {authLoading ? '...' : 'Recevoir le lien →'}
+
+          {/* Tabs */}
+          <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: '12px', padding: '4px', marginBottom: '24px' }}>
+            {[{ id: 'login', label: 'Connexion' }, { id: 'signup', label: 'Inscription' }].map(t => (
+              <button key={t.id} onClick={() => { setAuthTab(t.id as any); setAuthError('') }}
+                style={{ flex: 1, padding: '10px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '14px', background: authTab === t.id ? 'white' : 'transparent', color: authTab === t.id ? '#0c4a6e' : '#64748b', boxShadow: authTab === t.id ? '0 1px 4px rgba(0,0,0,0.1)' : 'none' }}>
+                {t.label}
               </button>
-              <div style={{ background: '#f0fdf4', borderRadius: '10px', padding: '12px', textAlign: 'center' }}>
-                <p style={{ margin: 0, fontSize: '13px', color: '#15803d' }}>🎁 1 analyse offerte à l'inscription</p>
-              </div>
-            </>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📧</div>
-              <h3 style={{ color: '#0c4a6e', margin: '0 0 8px' }}>Vérifiez votre email !</h3>
-              <p style={{ color: '#64748b', fontSize: '14px', margin: '0 0 20px' }}>
-                Un lien de connexion a été envoyé à <strong>{email}</strong>
-              </p>
-              <button onClick={() => setAuthSent(false)}
-                style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: 'pointer', fontSize: '14px' }}>
-                ← Changer d'email
-              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <input type="email" placeholder="votre@email.com" value={email}
+              onChange={e => setEmail(e.target.value)}
+              style={{ width: '100%', padding: '14px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }} />
+            <input type="password" placeholder="Mot de passe" value={authPassword}
+              onChange={e => setAuthPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAuth()}
+              style={{ width: '100%', padding: '14px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }} />
+          </div>
+
+          {authError && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '12px', marginTop: '12px' }}>
+              <p style={{ margin: 0, color: '#dc2626', fontSize: '13px' }}>{authError}</p>
+            </div>
+          )}
+
+          <button onClick={handleAuth} disabled={authLoading || !email || !authPassword}
+            style={{ width: '100%', padding: '14px', background: email && authPassword ? '#0ea5e9' : '#cbd5e1', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '700', cursor: email && authPassword ? 'pointer' : 'not-allowed', marginTop: '16px', opacity: authLoading ? 0.7 : 1 }}>
+            {authLoading ? '...' : authTab === 'login' ? 'Se connecter →' : "S'inscrire →"}
+          </button>
+
+          {authTab === 'signup' && (
+            <div style={{ background: '#f0fdf4', borderRadius: '10px', padding: '12px', textAlign: 'center', marginTop: '14px' }}>
+              <p style={{ margin: 0, fontSize: '13px', color: '#15803d' }}>🎁 1 analyse offerte à l'inscription</p>
             </div>
           )}
         </div>
@@ -619,7 +621,7 @@ export default function Home() {
     </main>
   )
 
-  // APP PRINCIPALE
+  // ===== APP PRINCIPALE =====
   return (
     <main style={{ minHeight: '100vh', background: '#f0f9ff', fontFamily: 'system-ui, sans-serif', paddingBottom: '80px' }}>
 
@@ -678,8 +680,9 @@ export default function Home() {
 
       {/* HEADER */}
       <header style={{ background: 'white', borderBottom: '1px solid #e0f2fe', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
-        <span style={{ fontWeight: '800', color: '#0c4a6e', fontSize: '18px' }}>🏊 Pool Water AI</span>
+        <span style={{ fontWeight: '800', color: '#0c4a6e', fontSize: '18px' }}>🏊 Pooltester.app</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>v1.0.1</span>
           <button onClick={() => setShowBuyCredits(true)}
             style={{ background: credits > 0 ? '#e0f2fe' : '#fee2e2', color: credits > 0 ? '#0369a1' : '#dc2626', padding: '6px 12px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '700' }}>
             {credits} crédit{credits !== 1 ? 's' : ''}
@@ -795,7 +798,7 @@ export default function Home() {
                 {user && credits < 2 && (
                   <button onClick={() => setShowBuyCredits(true)}
                     style={{ width: '100%', padding: '12px', background: 'white', border: '1px solid #fde68a', borderRadius: '12px', color: '#92400e', fontSize: '14px', cursor: 'pointer', fontWeight: '600' }}>
-                    💳 Vous avez {credits} crédit{credits !== 1 ? 's' : ''} — Recharger
+                    💳 {credits} crédit{credits !== 1 ? 's' : ''} restant{credits !== 1 ? 's' : ''} — Recharger
                   </button>
                 )}
               </>
@@ -821,7 +824,7 @@ export default function Home() {
                 </div>
               : <>
                   <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
-                    {user ? dbHistory.length : history.length} analyse{(user ? dbHistory.length : history.length) > 1 ? 's' : ''} sauvegardée{(user ? dbHistory.length : history.length) > 1 ? 's' : ''}
+                    {(user ? dbHistory : history).length} analyse{(user ? dbHistory : history).length > 1 ? 's' : ''} sauvegardée{(user ? dbHistory : history).length > 1 ? 's' : ''}
                   </p>
                   {(user ? dbHistory : history).map((a: any, i: number) => {
                     const score = a.score || a.diagnostic?.score_global
@@ -861,15 +864,15 @@ export default function Home() {
               style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: 'pointer', fontSize: '14px', marginBottom: '16px', padding: 0 }}>
               ← Retour
             </button>
-            {(selectedAnalysis.photoPreview || (selectedAnalysis as any).photo_urls?.[0]) && (
-              <img src={selectedAnalysis.photoPreview || (selectedAnalysis as any).photo_urls?.[0]} alt=""
+            {(selectedAnalysis.photoPreview || selectedAnalysis.photo_urls?.[0]) && (
+              <img src={selectedAnalysis.photoPreview || selectedAnalysis.photo_urls?.[0]} alt=""
                 style={{ width: '100%', borderRadius: '14px', objectFit: 'cover', maxHeight: '200px', marginBottom: '16px' }} />
             )}
             <DiagnosticView
               r={selectedAnalysis.diagnostic}
-              w={selectedAnalysis.weather || (selectedAnalysis as any).weather_data}
-              l={selectedAnalysis.location || (selectedAnalysis as any).location_data}
-              m={selectedAnalysis.photoMeta || (selectedAnalysis as any).photo_meta}
+              w={selectedAnalysis.weather || selectedAnalysis.weather_data}
+              l={selectedAnalysis.location || selectedAnalysis.location_data}
+              m={selectedAnalysis.photoMeta || selectedAnalysis.photo_meta}
             />
           </>
         )}
@@ -884,7 +887,7 @@ export default function Home() {
                 </div>
                 <div>
                   <p style={{ margin: 0, fontWeight: '700', color: '#0c4a6e', fontSize: '16px' }}>{user?.email}</p>
-                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>Membre Pool Water AI</p>
+                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>Membre Pooltester.app</p>
                 </div>
               </div>
 
@@ -902,6 +905,17 @@ export default function Home() {
               <button onClick={() => setShowBuyCredits(true)}
                 style={{ width: '100%', padding: '14px', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: '700', cursor: 'pointer', fontSize: '15px', marginBottom: '10px' }}>
                 💳 Acheter des crédits
+              </button>
+
+              <button onClick={async () => {
+                const newPwd = window.prompt('Nouveau mot de passe (min. 6 caractères) :')
+                if (!newPwd || newPwd.length < 6) return
+                const { error } = await supabase.auth.updateUser({ password: newPwd })
+                if (error) alert('Erreur : ' + error.message)
+                else alert('✅ Mot de passe mis à jour !')
+              }}
+                style={{ width: '100%', padding: '12px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', color: '#64748b', cursor: 'pointer', fontSize: '14px', marginBottom: '10px' }}>
+                🔑 Changer mon mot de passe
               </button>
 
               <button onClick={signOut}
