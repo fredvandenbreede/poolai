@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { analyzePoolPhoto } from '../../lib/claude'
+import { analyzePoolPhoto } from '../../../lib/claude'
 
 function getSeason(date: Date): string {
   const m = date.getMonth() + 1
