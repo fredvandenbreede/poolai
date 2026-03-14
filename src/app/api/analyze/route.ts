@@ -98,10 +98,7 @@ export async function POST(req: NextRequest) {
     // Vérifier crédits si user connecté
     if (userId) {
       const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('credits')
-        .eq('id', userId)
-        .single()
+        .from('profiles').select('credits').eq('id', userId).single()
       if (!profile || profile.credits < 1) {
         return NextResponse.json({ error: 'Crédits insuffisants', code: 'NO_CREDITS' }, { status: 402 })
       }
@@ -153,17 +150,16 @@ export async function POST(req: NextRequest) {
       etat: diagAny.etat || null
     }
 
-    // Sauvegarder selon contexte
     if (userId) {
+      // Récupérer crédits actuels
+      const { data: profile } = await supabaseAdmin
+        .from('profiles').select('credits').eq('id', userId).single()
+
+      // Sauvegarder analyse ET décrémenter crédits
       await Promise.all([
         supabaseAdmin.from('analyses').insert({ ...analysisData, user_id: userId }),
-        supabaseAdmin.from('profiles').update({ credits: supabaseAdmin.rpc as any }).eq('id', userId)
+        supabaseAdmin.from('profiles').update({ credits: Math.max(0, (profile?.credits || 0) - 1) }).eq('id', userId)
       ])
-      // Décrémenter les crédits
-      const { data: profile } = await supabaseAdmin.from('profiles').select('credits').eq('id', userId).single()
-      if (profile) {
-        await supabaseAdmin.from('profiles').update({ credits: profile.credits - 1 }).eq('id', userId)
-      }
     } else {
       await supabaseAdmin.from('anonymous_analyses').insert(analysisData)
     }
@@ -177,7 +173,7 @@ export async function POST(req: NextRequest) {
       sessionId
     })
   } catch (error) {
-    console.error(error)
+    console.error('Erreur analyze:', error)
     return NextResponse.json({ error: 'Erreur analyse' }, { status: 500 })
   }
 }
