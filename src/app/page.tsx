@@ -53,20 +53,44 @@ export default function Home() {
     setVolumeSet(true)
   }
 
+  async function compressImage(file: File): Promise<File> {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')!
+      const img = new Image()
+      img.onload = () => {
+        const maxSize = 1200
+        let { width, height } = img
+        if (width > height && width > maxSize) { height = height * maxSize / width; width = maxSize }
+        else if (height > maxSize) { width = width * maxSize / height; height = maxSize }
+        canvas.width = width
+        canvas.height = height
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(blob => {
+          if (blob) resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }))
+          else resolve(file)
+        }, 'image/jpeg', 0.75)
+      }
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
   function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const preview = URL.createObjectURL(file)
-    const newPhotos = [...photos]
-    newPhotos[currentPhotoSlot] = { file, preview }
-    setPhotos(newPhotos)
-    setResult(null)
-    setError(null)
+    compressImage(file).then(compressed => {
+      const preview = URL.createObjectURL(compressed)
+      const newPhotos = [...photos]
+      newPhotos[currentPhotoSlot] = { file: compressed, preview }
+      setPhotos(newPhotos)
+      setResult(null)
+      setError(null)
+    })
   }
 
   function triggerPhoto(slotIndex: number) {
     setCurrentPhotoSlot(slotIndex)
-    fileRef.current?.click()
+    setTimeout(() => fileRef.current?.click(), 50)
   }
 
   function removePhoto(index: number) {
@@ -139,7 +163,7 @@ export default function Home() {
   const canAnalyze = photos.length >= 1 && !loading
 
   const DiagnosticView = ({ r, w, l, m }: { r: any, w?: any, l?: any, m?: any }) => (
-    <div style={{ background: 'white', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
+    <div style={{ background: 'white', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', marginTop: '20px' }}>
 
       <div style={{ background: getColor(r.etat), padding: '24px', color: 'white', textAlign: 'center' }}>
         <div style={{ fontSize: '52px', fontWeight: '800', lineHeight: 1 }}>{r.score_global}/10</div>
@@ -241,7 +265,7 @@ export default function Home() {
                     </div>
                   )}
                   {action.dosage_standard && (
-                    <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#64748b' }}>Dose standard (50m³) : {action.dosage_standard}</p>
+                    <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#64748b' }}>Dose standard 50m³ : {action.dosage_standard}</p>
                   )}
                   {action.moment_application && (
                     <p style={{ margin: 0, fontSize: '13px', color: '#0c4a6e' }}>🕐 {action.moment_application}</p>
@@ -294,7 +318,7 @@ export default function Home() {
 
         {view === 'analyze' && (
           <>
-            {/* Volume de la piscine */}
+            {/* Volume */}
             <div style={{ background: 'white', borderRadius: '16px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                 <h3 style={{ margin: 0, color: '#0c4a6e', fontSize: '16px' }}>💧 Volume de votre piscine</h3>
@@ -320,14 +344,9 @@ export default function Home() {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '13px', color: '#64748b', whiteSpace: 'nowrap' }}>Autre volume :</span>
-                    <input
-                      type="number"
-                      value={poolVolume}
-                      onChange={e => setPoolVolume(parseInt(e.target.value) || 0)}
-                      style={{ flex: 1, padding: '10px', border: '2px solid #e2e8f0', borderRadius: '10px', fontSize: '16px', textAlign: 'center' }}
-                      min={5} max={1000}
-                    />
+                    <span style={{ fontSize: '13px', color: '#64748b', whiteSpace: 'nowrap' }}>Autre :</span>
+                    <input type="number" value={poolVolume} onChange={e => setPoolVolume(parseInt(e.target.value) || 0)}
+                      style={{ flex: 1, padding: '10px', border: '2px solid #e2e8f0', borderRadius: '10px', fontSize: '16px', textAlign: 'center' }} min={5} max={1000} />
                     <span style={{ fontSize: '13px', color: '#64748b' }}>m³</span>
                   </div>
                   <button onClick={saveVolume}
@@ -342,13 +361,13 @@ export default function Home() {
                     <span style={{ fontSize: '14px', color: '#0369a1', marginLeft: '4px' }}>m³</span>
                   </div>
                   <p style={{ fontSize: '13px', color: '#64748b', margin: 0, lineHeight: '1.5' }}>
-                    Les dosages seront calculés précisément pour votre piscine de {poolVolume}m³
+                    Dosages calculés précisément pour {poolVolume}m³
                   </p>
                 </div>
               )}
             </div>
 
-            {/* Photos multiples */}
+            {/* Photos */}
             {volumeSet && (
               <>
                 <div style={{ marginBottom: '16px' }}>
@@ -364,15 +383,10 @@ export default function Home() {
                       <div key={slot.id}>
                         {photos[index] ? (
                           <div style={{ position: 'relative' }}>
-                            <img
-                              src={photos[index].preview}
-                              alt={slot.label}
-                              onClick={() => triggerPhoto(index)}
-                              style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: '12px', cursor: 'pointer', border: '2px solid #0ea5e9' }}
-                            />
-                            <button
-                              onClick={() => removePhoto(index)}
-                              style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: '24px', height: '24px', color: 'white', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img src={photos[index].preview} alt={slot.label} onClick={() => triggerPhoto(index)}
+                              style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: '12px', cursor: 'pointer', border: '2px solid #0ea5e9', display: 'block' }} />
+                            <button onClick={() => removePhoto(index)}
+                              style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: '24px', height: '24px', color: 'white', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
                               ×
                             </button>
                             <div style={{ position: 'absolute', bottom: '4px', left: '4px', background: 'rgba(0,0,0,0.6)', borderRadius: '6px', padding: '2px 6px' }}>
@@ -380,9 +394,8 @@ export default function Home() {
                             </div>
                           </div>
                         ) : (
-                          <div
-                            onClick={() => triggerPhoto(index)}
-                            style={{ aspectRatio: '1', border: `2px dashed ${slot.required ? '#93c5fd' : '#d1d5db'}`, borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'white', padding: '8px', textAlign: 'center' }}>
+                          <div onClick={() => triggerPhoto(index)}
+                            style={{ aspectRatio: '1', border: '2px dashed #93c5fd', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'white', padding: '8px', textAlign: 'center' }}>
                             <span style={{ fontSize: '24px', marginBottom: '4px' }}>{slot.emoji}</span>
                             <span style={{ fontSize: '11px', fontWeight: '600', color: '#374151' }}>{slot.label}</span>
                             <span style={{ fontSize: '10px', color: '#94a3b8', marginTop: '2px' }}>{slot.desc}</span>
@@ -392,10 +405,18 @@ export default function Home() {
                     ))}
                   </div>
 
-                  {photos.length < 3 && (
+                  {photos.length < 3 && photos.length > 0 && (
                     <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px' }}>
                       <p style={{ margin: 0, fontSize: '13px', color: '#92400e' }}>
-                        💡 3 photos recommandées pour un diagnostic optimal. Vous pouvez analyser avec {photos.length > 0 ? 'seulement ' + photos.length : 'au moins 1'} photo.
+                        💡 3 photos recommandées pour un diagnostic optimal. Vous pouvez analyser avec {photos.length} photo{photos.length > 1 ? 's' : ''}.
+                      </p>
+                    </div>
+                  )}
+
+                  {photos.length === 0 && (
+                    <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px' }}>
+                      <p style={{ margin: 0, fontSize: '13px', color: '#0369a1' }}>
+                        📸 Ajoutez au moins 1 photo. 3 vues différentes = diagnostic plus précis.
                       </p>
                     </div>
                   )}
@@ -434,6 +455,7 @@ export default function Home() {
           </>
         )}
 
+        {/* Historique liste */}
         {view === 'history' && !selectedAnalysis && (
           <>
             {history.length === 0
@@ -470,6 +492,7 @@ export default function Home() {
           </>
         )}
 
+        {/* Historique détail */}
         {view === 'history' && selectedAnalysis && (
           <>
             <button onClick={() => setSelectedAnalysis(null)}
@@ -485,6 +508,7 @@ export default function Home() {
             <DiagnosticView r={selectedAnalysis.diagnostic} w={selectedAnalysis.weather} l={selectedAnalysis.location} m={selectedAnalysis.photoMeta} />
           </>
         )}
+
       </div>
     </main>
   )
