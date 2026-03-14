@@ -44,13 +44,3 @@ export default function AuthConfirm() {
     </main>
   )
 }
-```
-
-Ensuite dans **Supabase → Authentication → URL Configuration**, changez le **Redirect URL** en :
-```
-https://pooltester.app/test
-```
-
-Et dans **Site URL** :
-```
-https://pooltester.app
