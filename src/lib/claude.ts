@@ -16,16 +16,16 @@ export async function analyzePoolPhoto(
   const response = await client.messages.create({
     model: 'claude-opus-4-5',
     max_tokens: 1500,
-    system: `Tu es un expert en traitement de l'eau de piscine. Tu reponds UNIQUEMENT en JSON valide, sans texte avant ou apres.`,
+    system: `Tu es un expert en traitement de l'eau de piscine. Tu reponds UNIQUEMENT en JSON brut valide, sans markdown, sans backticks, sans texte avant ou apres. Commence directement par { et termine par }.`,
     messages: [{
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: photoBase64 } },
-        { type: 'text', text: `Analyse cette photo de piscine. Saison: ${context.season}. Retourne exactement ce JSON:
+        { type: 'text', text: `Analyse cette photo de piscine. Saison: ${context.season}. Reponds avec ce JSON et seulement ce JSON:
 {
   "score_global": 7,
   "etat": "bon",
-  "resume": "description courte de letat",
+  "resume": "description courte",
   "observations": {
     "couleur": "description couleur eau",
     "transparence": "limpide",
@@ -33,11 +33,11 @@ export async function analyzePoolPhoto(
     "depot_visible": false,
     "algues_suspectees": false
   },
-  "problemes_detectes": ["probleme si present"],
+  "problemes_detectes": [],
   "plan_action": [
     {
       "priorite": 1,
-      "action": "action concrete a faire",
+      "action": "action concrete",
       "produit_type": null,
       "dosage": "n/a",
       "delai": "dans 24h"
@@ -50,6 +50,7 @@ export async function analyzePoolPhoto(
     }]
   })
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
+  let text = response.content[0].type === 'text' ? response.content[0].text : ''
+  text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
   return JSON.parse(text)
 }
