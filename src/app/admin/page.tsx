@@ -1,8 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function AdminPage() {
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [authed, setAuthed] = useState(false)
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -12,6 +13,29 @@ export default function AdminPage() {
   const [selectedAnalysis, setSelectedAnalysis] = useState<any>(null)
   const [isLive, setIsLive] = useState(false)
   const [goLiveLoading, setGoLiveLoading] = useState(false)
+
+  useEffect(() => {
+    const saved = localStorage.getItem('admin_password')
+    if (saved) {
+      setPassword(saved)
+      setRememberMe(true)
+      // Auto-login
+      fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: saved })
+      }).then(r => r.json()).then(json => {
+        if (json.stats) {
+          setData(json.stats)
+          setAnalyses(json.recent || [])
+          setIsLive(json.isLive || false)
+          setAuthed(true)
+        } else {
+          localStorage.removeItem('admin_password')
+        }
+      }).catch(() => localStorage.removeItem('admin_password'))
+    }
+  }, [])
 
   async function login() {
     setLoading(true); setError('')
@@ -23,6 +47,8 @@ export default function AdminPage() {
       })
       const json = await res.json()
       if (!res.ok) { setError('Mot de passe incorrect'); return }
+      if (rememberMe) localStorage.setItem('admin_password', password)
+      else localStorage.removeItem('admin_password')
       setData(json.stats)
       setAnalyses(json.recent || [])
       setIsLive(json.isLive || false)
@@ -61,12 +87,19 @@ export default function AdminPage() {
     <main style={{ minHeight: '100vh', background: '#0c4a6e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
       <div style={{ background: 'white', borderRadius: '20px', padding: '40px', width: '100%', maxWidth: '360px', textAlign: 'center' }}>
         <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏊</div>
-        <h1 style={{ margin: '0 0 8px', fontSize: '22px', fontWeight: '800', color: '#0c4a6e' }}>Pool Water AI</h1>
+        <h1 style={{ margin: '0 0 4px', fontSize: '22px', fontWeight: '800', color: '#0c4a6e' }}>Pooltester.app</h1>
         <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '24px' }}>Dashboard admin</p>
         <input type="password" placeholder="Mot de passe" value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && login()}
-          style={{ width: '100%', padding: '14px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '16px', boxSizing: 'border-box', marginBottom: '12px', textAlign: 'center' }} />
+          style={{ width: '100%', padding: '14px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '16px', boxSizing: 'border-box', marginBottom: '12px', textAlign: 'center', outline: 'none' }} />
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginBottom: '16px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}
+            style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#0ea5e9' }} />
+          <span style={{ fontSize: '14px', color: '#64748b' }}>Rester connecté</span>
+        </label>
+
         {error && <p style={{ color: '#dc2626', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
         <button onClick={login} disabled={loading}
           style={{ width: '100%', padding: '14px', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '700', cursor: 'pointer' }}>
@@ -79,16 +112,15 @@ export default function AdminPage() {
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
 
-      {/* Header */}
       <header style={{ background: '#0c4a6e', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '24px' }}>🏊</span>
           <div>
-            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: 'white' }}>Pool Water AI</h1>
+            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: 'white' }}>Pooltester.app</h1>
             <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Dashboard admin</p>
           </div>
         </div>
-        <button onClick={() => setAuthed(false)}
+        <button onClick={() => { setAuthed(false); localStorage.removeItem('admin_password') }}
           style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>
           Déconnexion
         </button>
@@ -106,9 +138,7 @@ export default function AdminPage() {
             {isLive ? '🟢 APP EN LIGNE' : '🟡 MODE TEST'}
           </p>
           <p style={{ margin: '2px 0 0', fontSize: '12px', color: isLive ? '#15803d' : '#a16207' }}>
-            {isLive
-              ? 'Visible publiquement sur pooltester.app'
-              : 'App accessible sur pooltester.app/test uniquement'}
+            {isLive ? 'Visible publiquement sur pooltester.app' : 'App accessible sur pooltester.app/test uniquement'}
           </p>
         </div>
         <button onClick={toggleLive} disabled={goLiveLoading}
@@ -117,12 +147,8 @@ export default function AdminPage() {
             background: isLive ? 'white' : '#0ea5e9',
             color: isLive ? '#dc2626' : 'white',
             border: isLive ? '2px solid #fecaca' : 'none',
-            borderRadius: '10px',
-            fontWeight: '800',
-            cursor: 'pointer',
-            fontSize: '14px',
-            whiteSpace: 'nowrap',
-            flexShrink: 0
+            borderRadius: '10px', fontWeight: '800', cursor: 'pointer',
+            fontSize: '14px', whiteSpace: 'nowrap', flexShrink: 0
           }}>
           {goLiveLoading ? '...' : isLive ? '⏸ Remettre en test' : '🚀 GO LIVE'}
         </button>
@@ -130,10 +156,7 @@ export default function AdminPage() {
 
       {/* Tabs */}
       <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 24px', display: 'flex' }}>
-        {[
-          { id: 'overview', label: "📊 Vue d'ensemble" },
-          { id: 'analyses', label: '🔬 Analyses récentes' }
-        ].map(t => (
+        {[{ id: 'overview', label: "📊 Vue d'ensemble" }, { id: 'analyses', label: '🔬 Analyses récentes' }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             style={{ padding: '14px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: tab === t.id ? '700' : '400', color: tab === t.id ? '#0ea5e9' : '#64748b', borderBottom: tab === t.id ? '2px solid #0ea5e9' : '2px solid transparent', fontSize: '14px' }}>
             {t.label}
@@ -145,7 +168,6 @@ export default function AdminPage() {
 
         {tab === 'overview' && data && (
           <>
-            {/* KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
               <StatCard label="Total analyses" value={data.total} sub="users + anonymes" />
               <StatCard label="Users connectés" value={data.totalUsers} sub={`${data.totalAnon} anonymes`} color="#8b5cf6" />
@@ -155,8 +177,6 @@ export default function AdminPage() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-
-              {/* États */}
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>🎯 État des piscines</h3>
                 {Object.keys(data.etatCounts || {}).length === 0
@@ -176,7 +196,6 @@ export default function AdminPage() {
                 }
               </div>
 
-              {/* Top villes */}
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>📍 Top villes</h3>
                 {data.cityCounts?.length === 0
@@ -194,7 +213,6 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Pays */}
             {Object.keys(data.countryCounts || {}).length > 0 && (
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>🌍 Par pays</h3>
@@ -216,7 +234,7 @@ export default function AdminPage() {
                 <p style={{ color: '#64748b', fontSize: '14px' }}>Les données apparaîtront ici dès la première analyse.</p>
                 <div style={{ marginTop: '20px', background: '#f0f9ff', borderRadius: '10px', padding: '14px' }}>
                   <p style={{ margin: 0, fontSize: '13px', color: '#0369a1' }}>
-                    👉 Testez l'app sur <a href="/test" style={{ color: '#0ea5e9', fontWeight: '700' }}>pooltester.app/test</a>
+                    👉 Testez sur <a href="/test" style={{ color: '#0ea5e9', fontWeight: '700' }}>pooltester.app/test</a>
                   </p>
                 </div>
               </div>
