@@ -42,8 +42,7 @@ async function getWeather(lat: number, lng: number) {
       location: {
         city: geo[0]?.name ?? 'Inconnue',
         country: geo[0]?.country ?? '',
-        lat,
-        lng
+        lat, lng
       }
     }
   } catch { return null }
@@ -53,9 +52,7 @@ async function extractExif(buffer: ArrayBuffer) {
   try {
     const { default: exifr } = await import('exifr')
     const exif = await exifr.parse(Buffer.from(buffer), {
-      gps: true,
-      tiff: true,
-      exif: true,
+      gps: true, tiff: true, exif: true,
       pick: ['DateTimeOriginal', 'CreateDate', 'GPSLatitude', 'GPSLongitude', 'Make', 'Model']
     })
     if (!exif) return null
@@ -63,7 +60,6 @@ async function extractExif(buffer: ArrayBuffer) {
       date: exif.DateTimeOriginal || exif.CreateDate || null,
       lat: exif.latitude || null,
       lng: exif.longitude || null,
-      camera: exif.Make ? `${exif.Make} ${exif.Model || ''}`.trim() : null
     }
   } catch { return null }
 }
@@ -71,26 +67,38 @@ async function extractExif(buffer: ArrayBuffer) {
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
-    const photoFile = formData.get('photo') as File
+    const poolVolume = parseInt(formData.get('poolVolume') as string || '50')
     const latForm = parseFloat(formData.get('lat') as string || '0')
     const lngForm = parseFloat(formData.get('lng') as string || '0')
     const historyRaw = formData.get('history') as string | null
 
-    if (!photoFile) return NextResponse.json({ error: 'Photo manquante' }, { status: 400 })
+    // Récupérer toutes les photos (photo1, photo2, photo3)
+    const photoFiles: File[] = []
+    for (let i = 1; i <= 5; i++) {
+      const f = formData.get(`photo${i}`) as File | null
+      if (f) photoFiles.push(f)
+    }
 
-    const photoBuffer = await photoFile.arrayBuffer()
-    const photoBase64 = Buffer.from(photoBuffer).toString('base64')
-    const mimeType = getMimeType(photoFile)
+    if (photoFiles.length === 0) {
+      return NextResponse.json({ error: 'Au moins une photo requise' }, { status: 400 })
+    }
 
-    const exif = await extractExif(photoBuffer)
+    // Convertir toutes les photos en base64
+    const photos = await Promise.all(photoFiles.map(async (file) => {
+      const buffer = await file.arrayBuffer()
+      return {
+        base64: Buffer.from(buffer).toString('base64'),
+        mediaType: getMimeType(file),
+        buffer
+      }
+    }))
 
+    // Extraire EXIF de la première photo
+    const exif = await extractExif(photos[0].buffer)
     const lat = exif?.lat || latForm
     const lng = exif?.lng || lngForm
-
     const photoDate = exif?.date ? new Date(exif.date) : new Date()
     const hour = photoDate.getHours()
-    const timeOfDay = getTimeOfDay(hour)
-    const dayOfWeek = photoDate.toLocaleDateString('fr-FR', { weekday: 'long' })
 
     const geoData = lat && lng ? await getWeather(lat, lng) : null
     const previousAnalyses = historyRaw ? JSON.parse(historyRaw) : []
@@ -98,19 +106,23 @@ export async function POST(req: NextRequest) {
     const photoMeta = {
       date: photoDate.toLocaleDateString('fr-FR'),
       heure: `${hour}h${photoDate.getMinutes().toString().padStart(2, '0')}`,
-      momentJournee: timeOfDay,
-      jourSemaine: dayOfWeek,
+      momentJournee: getTimeOfDay(hour),
+      jourSemaine: photoDate.toLocaleDateString('fr-FR', { weekday: 'long' }),
       sourceGPS: exif?.lat ? 'EXIF photo' : lat ? 'GPS navigateur' : 'non disponible'
     }
 
-    const diagnostic = await analyzePoolPhoto(photoBase64, null, {
-      season: getSeason(photoDate),
-      mimeType,
-      weather: geoData?.weather,
-      location: geoData?.location,
-      previousAnalyses,
-      photoMeta
-    })
+    const diagnostic = await analyzePoolPhoto(
+      photos.map(p => ({ base64: p.base64, mediaType: p.mediaType })),
+      {
+        season: getSeason(photoDate),
+        poolVolume,
+        weather: geoData?.weather,
+        location: geoData?.location,
+        previousAnalyses,
+        photoMeta,
+        photoCount: photos.length
+      }
+    )
 
     return NextResponse.json({
       diagnostic,
