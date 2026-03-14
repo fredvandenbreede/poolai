@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { analyzePoolPhoto } from '../../../lib/claude'
+import { supabaseAdmin } from '../../../lib/supabase'
 
 function getSeason(date: Date): string {
   const m = date.getMonth() + 1
@@ -53,7 +54,7 @@ async function extractExif(buffer: ArrayBuffer) {
     const { default: exifr } = await import('exifr')
     const exif = await exifr.parse(Buffer.from(buffer), {
       gps: true, tiff: true, exif: true,
-      pick: ['DateTimeOriginal', 'CreateDate', 'GPSLatitude', 'GPSLongitude', 'Make', 'Model']
+      pick: ['DateTimeOriginal', 'CreateDate', 'GPSLatitude', 'GPSLongitude']
     })
     if (!exif) return null
     return {
@@ -64,6 +65,27 @@ async function extractExif(buffer: ArrayBuffer) {
   } catch { return null }
 }
 
+async function uploadPhoto(
+  buffer: ArrayBuffer,
+  sessionId: string,
+  index: number,
+  mimeType: string
+): Promise<string | null> {
+  try {
+    const ext = mimeType.split('/')[1] || 'jpg'
+    const path = `anonymous/${sessionId}/photo_${index}.${ext}`
+    const { error } = await supabaseAdmin.storage
+      .from('pool-photos')
+      .upload(path, Buffer.from(buffer), {
+        contentType: mimeType,
+        upsert: true
+      })
+    if (error) return null
+    const { data } = supabaseAdmin.storage.from('pool-photos').getPublicUrl(path)
+    return data.publicUrl
+  } catch { return null }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -71,8 +93,8 @@ export async function POST(req: NextRequest) {
     const latForm = parseFloat(formData.get('lat') as string || '0')
     const lngForm = parseFloat(formData.get('lng') as string || '0')
     const historyRaw = formData.get('history') as string | null
+    const sessionId = formData.get('sessionId') as string || `anon_${Date.now()}`
 
-    // Récupérer toutes les photos (photo1, photo2, photo3)
     const photoFiles: File[] = []
     for (let i = 1; i <= 5; i++) {
       const f = formData.get(`photo${i}`) as File | null
@@ -83,18 +105,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Au moins une photo requise' }, { status: 400 })
     }
 
-    // Convertir toutes les photos en base64
-    const photos = await Promise.all(photoFiles.map(async (file) => {
-      const buffer = await file.arrayBuffer()
-      return {
-        base64: Buffer.from(buffer).toString('base64'),
-        mediaType: getMimeType(file),
-        buffer
-      }
+    // Traiter toutes les photos en parallèle
+    const photoBuffers = await Promise.all(photoFiles.map(f => f.arrayBuffer()))
+    const mimeTypes = photoFiles.map(getMimeType)
+
+    // Upload photos vers Supabase Storage en parallèle
+    const photoUrls = await Promise.all(
+      photoBuffers.map((buf, i) => uploadPhoto(buf, sessionId, i + 1, mimeTypes[i]))
+    )
+
+    const photos = photoBuffers.map((buf, i) => ({
+      base64: Buffer.from(buf).toString('base64'),
+      mediaType: mimeTypes[i]
     }))
 
-    // Extraire EXIF de la première photo
-    const exif = await extractExif(photos[0].buffer)
+    // EXIF de la première photo
+    const exif = await extractExif(photoBuffers[0])
     const lat = exif?.lat || latForm
     const lng = exif?.lng || lngForm
     const photoDate = exif?.date ? new Date(exif.date) : new Date()
@@ -111,24 +137,40 @@ export async function POST(req: NextRequest) {
       sourceGPS: exif?.lat ? 'EXIF photo' : lat ? 'GPS navigateur' : 'non disponible'
     }
 
-    const diagnostic = await analyzePoolPhoto(
-      photos.map(p => ({ base64: p.base64, mediaType: p.mediaType })),
-      {
-        season: getSeason(photoDate),
-        poolVolume,
-        weather: geoData?.weather,
-        location: geoData?.location,
-        previousAnalyses,
-        photoMeta,
-        photoCount: photos.length
-      }
-    )
+    // Appel Claude Vision
+    const diagnostic = await analyzePoolPhoto(photos, {
+      season: getSeason(photoDate),
+      poolVolume,
+      weather: geoData?.weather,
+      location: geoData?.location,
+      previousAnalyses,
+      photoMeta,
+      photoCount: photos.length
+    })
+
+    const diagAny = diagnostic as any
+
+    // Sauvegarder en base de données (anonyme)
+    await supabaseAdmin.from('anonymous_analyses').insert({
+      session_id: sessionId,
+      photo_urls: photoUrls.filter(Boolean),
+      diagnostic,
+      weather_data: geoData?.weather || null,
+      location_data: geoData?.location || null,
+      photo_meta: photoMeta,
+      pool_volume: poolVolume,
+      photo_count: photos.length,
+      score: diagAny.score_global || null,
+      etat: diagAny.etat || null
+    })
 
     return NextResponse.json({
       diagnostic,
       weather: geoData?.weather,
       location: geoData?.location,
-      photoMeta
+      photoMeta,
+      photoUrls: photoUrls.filter(Boolean),
+      sessionId
     })
   } catch (error) {
     console.error(error)
