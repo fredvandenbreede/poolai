@@ -9,6 +9,14 @@ function getSeason(date: Date): string {
   return 'hiver'
 }
 
+function getMimeType(file: File): 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
+  const type = file.type
+  if (type === 'image/png') return 'image/png'
+  if (type === 'image/gif') return 'image/gif'
+  if (type === 'image/webp') return 'image/webp'
+  return 'image/jpeg'
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -17,9 +25,11 @@ export async function POST(req: NextRequest) {
 
     const photoBuffer = await photoFile.arrayBuffer()
     const photoBase64 = Buffer.from(photoBuffer).toString('base64')
+    const mimeType = getMimeType(photoFile)
 
     const diagnostic = await analyzePoolPhoto(photoBase64, null, {
-      season: getSeason(new Date())
+      season: getSeason(new Date()),
+      mimeType
     })
 
     return NextResponse.json({ diagnostic })
