@@ -45,7 +45,9 @@ export default function AdminPage() {
     setGoLiveLoading(false)
   }
 
-  const getColor = (etat: string) => ({ excellent: '#22c55e', bon: '#84cc16', attention: '#f59e0b', urgent: '#ef4444' }[etat] || '#6b7280')
+  const getColor = (etat: string) => ({
+    excellent: '#22c55e', bon: '#84cc16', attention: '#f59e0b', urgent: '#ef4444'
+  }[etat] || '#6b7280')
 
   const StatCard = ({ label, value, sub, color }: any) => (
     <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: '1px solid #f1f5f9' }}>
@@ -104,7 +106,9 @@ export default function AdminPage() {
             {isLive ? '🟢 APP EN LIGNE' : '🟡 MODE TEST'}
           </p>
           <p style={{ margin: '2px 0 0', fontSize: '12px', color: isLive ? '#15803d' : '#a16207' }}>
-            {isLive ? 'Visible publiquement sur pooltester.app' : 'App accessible sur pooltester.app/test uniquement'}
+            {isLive
+              ? 'Visible publiquement sur pooltester.app'
+              : 'App accessible sur pooltester.app/test uniquement'}
           </p>
         </div>
         <button onClick={toggleLive} disabled={goLiveLoading}
@@ -126,7 +130,10 @@ export default function AdminPage() {
 
       {/* Tabs */}
       <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 24px', display: 'flex' }}>
-        {[{ id: 'overview', label: "📊 Vue d'ensemble" }, { id: 'analyses', label: '🔬 Analyses récentes' }].map(t => (
+        {[
+          { id: 'overview', label: "📊 Vue d'ensemble" },
+          { id: 'analyses', label: '🔬 Analyses récentes' }
+        ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             style={{ padding: '14px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: tab === t.id ? '700' : '400', color: tab === t.id ? '#0ea5e9' : '#64748b', borderBottom: tab === t.id ? '2px solid #0ea5e9' : '2px solid transparent', fontSize: '14px' }}>
             {t.label}
@@ -138,45 +145,69 @@ export default function AdminPage() {
 
         {tab === 'overview' && data && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-              <StatCard label="Total analyses" value={data.total} sub="depuis le lancement" />
+            {/* KPIs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              <StatCard label="Total analyses" value={data.total} sub="users + anonymes" />
+              <StatCard label="Users connectés" value={data.totalUsers} sub={`${data.totalAnon} anonymes`} color="#8b5cf6" />
               <StatCard label="Analyses aujourd'hui" value={data.todayCount} color="#0ea5e9" />
               <StatCard label="Score eau moyen" value={`${data.avgScore}/10`} color={data.avgScore >= 7 ? '#22c55e' : data.avgScore >= 5 ? '#f59e0b' : '#ef4444'} />
               <StatCard label="Volume moyen" value={`${data.avgVolume}m³`} sub="des piscines analysées" />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+
+              {/* États */}
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>🎯 État des piscines</h3>
-                {Object.keys(data.etatCounts || {}).length === 0 && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Pas encore de données</p>}
-                {Object.entries(data.etatCounts || {}).sort((a: any, b: any) => b[1] - a[1]).map(([etat, count]: any) => (
-                  <div key={etat} style={{ marginBottom: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>{etat}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '700', color: getColor(etat) }}>{count}</span>
-                    </div>
-                    <div style={{ background: '#f1f5f9', borderRadius: '20px', height: '8px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${Math.round(count / data.total * 100)}%`, background: getColor(etat), borderRadius: '20px' }} />
-                    </div>
-                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>{Math.round(count / data.total * 100)}%</span>
-                  </div>
-                ))}
+                {Object.keys(data.etatCounts || {}).length === 0
+                  ? <p style={{ color: '#94a3b8', fontSize: '14px' }}>Pas encore de données</p>
+                  : Object.entries(data.etatCounts || {}).sort((a: any, b: any) => b[1] - a[1]).map(([etat, count]: any) => (
+                      <div key={etat} style={{ marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>{etat}</span>
+                          <span style={{ fontSize: '14px', fontWeight: '700', color: getColor(etat) }}>{count}</span>
+                        </div>
+                        <div style={{ background: '#f1f5f9', borderRadius: '20px', height: '8px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.round(count / data.total * 100)}%`, background: getColor(etat), borderRadius: '20px' }} />
+                        </div>
+                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>{Math.round(count / data.total * 100)}%</span>
+                      </div>
+                    ))
+                }
               </div>
 
+              {/* Top villes */}
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>📍 Top villes</h3>
-                {data.cityCounts?.length === 0 && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Pas encore de données GPS</p>}
-                {data.cityCounts?.map(([city, count]: any, i: number) => (
-                  <div key={city} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < data.cityCounts.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '13px', color: '#94a3b8', fontWeight: '700', minWidth: '20px' }}>#{i + 1}</span>
-                      <span style={{ fontSize: '14px', color: '#374151' }}>{city}</span>
-                    </div>
-                    <span style={{ fontSize: '14px', fontWeight: '700', color: '#0369a1' }}>{count}</span>
-                  </div>
-                ))}
+                {data.cityCounts?.length === 0
+                  ? <p style={{ color: '#94a3b8', fontSize: '14px' }}>Pas encore de données GPS</p>
+                  : data.cityCounts?.map(([city, count]: any, i: number) => (
+                      <div key={city} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < data.cityCounts.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '13px', color: '#94a3b8', fontWeight: '700', minWidth: '20px' }}>#{i + 1}</span>
+                          <span style={{ fontSize: '14px', color: '#374151' }}>{city}</span>
+                        </div>
+                        <span style={{ fontSize: '14px', fontWeight: '700', color: '#0369a1' }}>{count}</span>
+                      </div>
+                    ))
+                }
               </div>
             </div>
+
+            {/* Pays */}
+            {Object.keys(data.countryCounts || {}).length > 0 && (
+              <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>🌍 Par pays</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                  {Object.entries(data.countryCounts).sort((a: any, b: any) => b[1] - a[1]).map(([country, count]: any) => (
+                    <div key={country} style={{ background: '#f0f9ff', borderRadius: '10px', padding: '10px 16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#0369a1' }}>{country}</span>
+                      <span style={{ background: '#0ea5e9', color: 'white', borderRadius: '20px', padding: '2px 8px', fontSize: '12px', fontWeight: '700' }}>{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {data.total === 0 && (
               <div style={{ background: 'white', borderRadius: '14px', padding: '40px', textAlign: 'center' }}>
@@ -202,17 +233,23 @@ export default function AdminPage() {
                   ← Retour
                 </button>
                 <div style={{ background: 'white', borderRadius: '14px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
-                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px', alignItems: 'flex-start' }}>
                     <div style={{ background: getColor(selectedAnalysis.etat), borderRadius: '12px', padding: '12px 20px', color: 'white', textAlign: 'center' }}>
                       <div style={{ fontSize: '28px', fontWeight: '800' }}>{selectedAnalysis.score}/10</div>
                       <div style={{ fontSize: '12px', textTransform: 'capitalize' }}>{selectedAnalysis.etat}</div>
                     </div>
                     <div>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
+                        <span style={{ background: selectedAnalysis.source === 'user' ? '#f5f3ff' : '#f0fdf4', color: selectedAnalysis.source === 'user' ? '#7c3aed' : '#16a34a', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700' }}>
+                          {selectedAnalysis.source === 'user' ? '👤 Connecté' : '👻 Anonyme'}
+                        </span>
+                      </div>
                       <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#64748b' }}>📅 {new Date(selectedAnalysis.created_at).toLocaleString('fr-FR')}</p>
                       {selectedAnalysis.location_data?.city && <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#64748b' }}>📍 {selectedAnalysis.location_data.city}, {selectedAnalysis.location_data.country}</p>}
-                      <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#64748b' }}>💧 {selectedAnalysis.pool_volume}m³ — {selectedAnalysis.photo_count} photo{selectedAnalysis.photo_count > 1 ? 's' : ''}</p>
+                      <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>💧 {selectedAnalysis.pool_volume}m³ — {selectedAnalysis.photo_count} photo{selectedAnalysis.photo_count > 1 ? 's' : ''}</p>
                     </div>
                   </div>
+
                   {selectedAnalysis.photo_urls?.length > 0 && (
                     <div style={{ marginBottom: '20px' }}>
                       <h4 style={{ color: '#0c4a6e', margin: '0 0 12px' }}>Photos</h4>
@@ -225,6 +262,7 @@ export default function AdminPage() {
                       </div>
                     </div>
                   )}
+
                   <h4 style={{ color: '#0c4a6e', margin: '0 0 12px' }}>Diagnostic complet</h4>
                   <pre style={{ background: '#f8fafc', borderRadius: '10px', padding: '16px', fontSize: '12px', overflow: 'auto', color: '#374151', lineHeight: '1.6', maxHeight: '400px' }}>
                     {JSON.stringify(selectedAnalysis.diagnostic, null, 2)}
@@ -233,7 +271,18 @@ export default function AdminPage() {
               </div>
             ) : (
               <>
-                <h3 style={{ color: '#0c4a6e', margin: '0 0 16px' }}>Analyses récentes</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <h3 style={{ color: '#0c4a6e', margin: 0 }}>Analyses récentes</h3>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <span style={{ background: '#f5f3ff', color: '#7c3aed', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '700' }}>
+                      👤 {analyses.filter(a => a.source === 'user').length} connectés
+                    </span>
+                    <span style={{ background: '#f0fdf4', color: '#16a34a', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '700' }}>
+                      👻 {analyses.filter(a => a.source === 'anonymous').length} anonymes
+                    </span>
+                  </div>
+                </div>
+
                 {analyses.length === 0
                   ? <div style={{ background: 'white', borderRadius: '14px', padding: '40px', textAlign: 'center' }}>
                       <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔬</div>
@@ -248,15 +297,22 @@ export default function AdminPage() {
                             : <div style={{ width: '56px', height: '56px', borderRadius: '10px', background: '#f1f5f9', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>🏊</div>
                           }
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '4px' }}>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
                               <span style={{ fontWeight: '800', fontSize: '18px', color: getColor(a.etat) }}>{a.score}/10</span>
                               <span style={{ fontSize: '12px', background: '#f1f5f9', padding: '2px 8px', borderRadius: '20px', color: '#64748b', textTransform: 'capitalize' }}>{a.etat}</span>
                               <span style={{ fontSize: '12px', color: '#94a3b8' }}>💧 {a.pool_volume}m³</span>
+                              <span style={{ fontSize: '11px', background: a.source === 'user' ? '#f5f3ff' : '#f0fdf4', color: a.source === 'user' ? '#7c3aed' : '#16a34a', padding: '1px 6px', borderRadius: '10px', fontWeight: '600' }}>
+                                {a.source === 'user' ? '👤' : '👻'}
+                              </span>
                             </div>
-                            <p style={{ margin: 0, fontSize: '13px', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.diagnostic?.resume || 'Pas de résumé'}</p>
+                            <p style={{ margin: 0, fontSize: '13px', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {a.diagnostic?.resume || 'Pas de résumé'}
+                            </p>
                             <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
                               {a.location_data?.city && <span style={{ fontSize: '12px', color: '#94a3b8' }}>📍 {a.location_data.city}</span>}
-                              <span style={{ fontSize: '12px', color: '#94a3b8' }}>📅 {new Date(a.created_at).toLocaleDateString('fr-FR')} {new Date(a.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                              <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                                📅 {new Date(a.created_at).toLocaleDateString('fr-FR')} {new Date(a.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
                               <span style={{ fontSize: '12px', color: '#94a3b8' }}>📸 {a.photo_count} photo{a.photo_count > 1 ? 's' : ''}</span>
                             </div>
                           </div>
