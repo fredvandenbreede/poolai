@@ -10,6 +10,8 @@ export default function AdminPage() {
   const [tab, setTab] = useState<'overview' | 'analyses'>('overview')
   const [analyses, setAnalyses] = useState<any[]>([])
   const [selectedAnalysis, setSelectedAnalysis] = useState<any>(null)
+  const [isLive, setIsLive] = useState(false)
+  const [goLiveLoading, setGoLiveLoading] = useState(false)
 
   async function login() {
     setLoading(true); setError('')
@@ -23,9 +25,24 @@ export default function AdminPage() {
       if (!res.ok) { setError('Mot de passe incorrect'); return }
       setData(json.stats)
       setAnalyses(json.recent || [])
+      setIsLive(json.isLive || false)
       setAuthed(true)
     } catch { setError('Erreur de connexion') }
     finally { setLoading(false) }
+  }
+
+  async function toggleLive() {
+    const msg = isLive ? 'Remettre en mode test ?' : '🚀 Déployer en public sur pooltester.app ?'
+    if (!window.confirm(msg)) return
+    setGoLiveLoading(true)
+    const res = await fetch('/api/admin/live', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password, live: !isLive })
+    })
+    const d = await res.json()
+    if (d.success) setIsLive(!isLive)
+    setGoLiveLoading(false)
   }
 
   const getColor = (etat: string) => ({ excellent: '#22c55e', bon: '#84cc16', attention: '#f59e0b', urgent: '#ef4444' }[etat] || '#6b7280')
@@ -59,6 +76,8 @@ export default function AdminPage() {
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
+
+      {/* Header */}
       <header style={{ background: '#0c4a6e', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '24px' }}>🏊</span>
@@ -73,7 +92,40 @@ export default function AdminPage() {
         </button>
       </header>
 
-      <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 24px', display: 'flex', gap: '4px' }}>
+      {/* Bannière GO LIVE */}
+      <div style={{
+        background: isLive ? '#f0fdf4' : '#fffbeb',
+        borderBottom: `2px solid ${isLive ? '#86efac' : '#fde68a'}`,
+        padding: '14px 24px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+      }}>
+        <div>
+          <p style={{ margin: 0, fontWeight: '700', fontSize: '14px', color: isLive ? '#16a34a' : '#92400e' }}>
+            {isLive ? '🟢 APP EN LIGNE' : '🟡 MODE TEST'}
+          </p>
+          <p style={{ margin: '2px 0 0', fontSize: '12px', color: isLive ? '#15803d' : '#a16207' }}>
+            {isLive ? 'Visible publiquement sur pooltester.app' : 'App accessible sur pooltester.app/test uniquement'}
+          </p>
+        </div>
+        <button onClick={toggleLive} disabled={goLiveLoading}
+          style={{
+            padding: '10px 20px',
+            background: isLive ? 'white' : '#0ea5e9',
+            color: isLive ? '#dc2626' : 'white',
+            border: isLive ? '2px solid #fecaca' : 'none',
+            borderRadius: '10px',
+            fontWeight: '800',
+            cursor: 'pointer',
+            fontSize: '14px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0
+          }}>
+          {goLiveLoading ? '...' : isLive ? '⏸ Remettre en test' : '🚀 GO LIVE'}
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 24px', display: 'flex' }}>
         {[{ id: 'overview', label: "📊 Vue d'ensemble" }, { id: 'analyses', label: '🔬 Analyses récentes' }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             style={{ padding: '14px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: tab === t.id ? '700' : '400', color: tab === t.id ? '#0ea5e9' : '#64748b', borderBottom: tab === t.id ? '2px solid #0ea5e9' : '2px solid transparent', fontSize: '14px' }}>
@@ -96,6 +148,7 @@ export default function AdminPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
               <div style={{ background: 'white', borderRadius: '14px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0c4a6e', fontSize: '15px' }}>🎯 État des piscines</h3>
+                {Object.keys(data.etatCounts || {}).length === 0 && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Pas encore de données</p>}
                 {Object.entries(data.etatCounts || {}).sort((a: any, b: any) => b[1] - a[1]).map(([etat, count]: any) => (
                   <div key={etat} style={{ marginBottom: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
@@ -130,6 +183,11 @@ export default function AdminPage() {
                 <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
                 <h3 style={{ color: '#0c4a6e', margin: '0 0 8px' }}>Aucune analyse pour l'instant</h3>
                 <p style={{ color: '#64748b', fontSize: '14px' }}>Les données apparaîtront ici dès la première analyse.</p>
+                <div style={{ marginTop: '20px', background: '#f0f9ff', borderRadius: '10px', padding: '14px' }}>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#0369a1' }}>
+                    👉 Testez l'app sur <a href="/test" style={{ color: '#0ea5e9', fontWeight: '700' }}>pooltester.app/test</a>
+                  </p>
+                </div>
               </div>
             )}
           </>
@@ -161,7 +219,7 @@ export default function AdminPage() {
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         {selectedAnalysis.photo_urls.map((url: string, i: number) => (
                           <a key={i} href={url} target="_blank" rel="noopener noreferrer">
-                            <img src={url} alt={`Photo ${i + 1}`} style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '10px', border: '2px solid #e2e8f0' }} />
+                            <img src={url} alt="" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '10px', border: '2px solid #e2e8f0' }} />
                           </a>
                         ))}
                       </div>

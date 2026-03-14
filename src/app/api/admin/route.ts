@@ -9,78 +9,55 @@ export async function POST(req: NextRequest) {
 
   const [
     { data: analyses },
-    { data: total },
     { data: byEtat },
     { data: byCountry },
-    { data: recent }
+    { data: recent },
+    { data: liveData }
   ] = await Promise.all([
-    supabaseAdmin
-      .from('anonymous_analyses')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100),
-    supabaseAdmin
-      .from('anonymous_analyses')
-      .select('id', { count: 'exact', head: true }),
-    supabaseAdmin
-      .from('anonymous_analyses')
-      .select('etat'),
-    supabaseAdmin
-      .from('anonymous_analyses')
-      .select('location_data'),
-    supabaseAdmin
-      .from('anonymous_analyses')
-      .select('created_at, score, etat, pool_volume, location_data, photo_count, photo_urls, diagnostic')
-      .order('created_at', { ascending: false })
-      .limit(5)
+    supabaseAdmin.from('anonymous_analyses').select('*').order('created_at', { ascending: false }).limit(100),
+    supabaseAdmin.from('anonymous_analyses').select('etat'),
+    supabaseAdmin.from('anonymous_analyses').select('location_data'),
+    supabaseAdmin.from('anonymous_analyses').select('created_at, score, etat, pool_volume, location_data, photo_count, photo_urls, diagnostic').order('created_at', { ascending: false }).limit(20),
+    supabaseAdmin.from('settings').select('value').eq('key', 'is_live').single()
   ])
 
-  // Stats calculées
-  const scores = (analyses || []).map(a => a.score).filter(Boolean)
+  const scores = (analyses || []).map((a: any) => a.score).filter(Boolean)
   const avgScore = scores.length ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length * 10) / 10 : 0
 
-  const etatCounts = (byEtat || []).reduce((acc: any, a) => {
+  const etatCounts = (byEtat || []).reduce((acc: any, a: any) => {
     if (a.etat) acc[a.etat] = (acc[a.etat] || 0) + 1
     return acc
   }, {})
 
-  const countryCounts = (byCountry || []).reduce((acc: any, a) => {
+  const countryCounts = (byCountry || []).reduce((acc: any, a: any) => {
     const country = a.location_data?.country
     if (country) acc[country] = (acc[country] || 0) + 1
     return acc
   }, {})
 
-  const cityCounts = (byCountry || []).reduce((acc: any, a) => {
+  const cityCounts = (byCountry || []).reduce((acc: any, a: any) => {
     const city = a.location_data?.city
     if (city && city !== 'Inconnue') acc[city] = (acc[city] || 0) + 1
     return acc
   }, {})
 
-  const volumes = (analyses || []).map(a => a.pool_volume).filter(Boolean)
+  const volumes = (analyses || []).map((a: any) => a.pool_volume).filter(Boolean)
   const avgVolume = volumes.length ? Math.round(volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length) : 0
 
   const today = new Date().toDateString()
-  const todayCount = (analyses || []).filter(a =>
-    new Date(a.created_at).toDateString() === today
-  ).length
-
-  const last7days = (analyses || []).reduce((acc: any, a) => {
-    const d = new Date(a.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
-    acc[d] = (acc[d] || 0) + 1
-    return acc
-  }, {})
+  const todayCount = (analyses || []).filter((a: any) => new Date(a.created_at).toDateString() === today).length
 
   return NextResponse.json({
     stats: {
-      total: (total as any)?.length || analyses?.length || 0,
+      total: analyses?.length || 0,
       avgScore,
       avgVolume,
       todayCount,
       etatCounts,
       countryCounts,
-      cityCounts: Object.entries(cityCounts).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10),
-      last7days
+      cityCounts: Object.entries(cityCounts).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10)
     },
-    recent: recent || []
+    recent: recent || [],
+    isLive: liveData?.value === 'true'
   })
 }
