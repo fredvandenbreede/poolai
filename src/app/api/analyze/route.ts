@@ -65,21 +65,13 @@ async function extractExif(buffer: ArrayBuffer) {
   } catch { return null }
 }
 
-async function uploadPhoto(
-  buffer: ArrayBuffer,
-  sessionId: string,
-  index: number,
-  mimeType: string
-): Promise<string | null> {
+async function uploadPhoto(buffer: ArrayBuffer, folder: string, index: number, mimeType: string): Promise<string | null> {
   try {
     const ext = mimeType.split('/')[1] || 'jpg'
-    const path = `anonymous/${sessionId}/photo_${index}.${ext}`
+    const path = `${folder}/photo_${index}.${ext}`
     const { error } = await supabaseAdmin.storage
       .from('pool-photos')
-      .upload(path, Buffer.from(buffer), {
-        contentType: mimeType,
-        upsert: true
-      })
+      .upload(path, Buffer.from(buffer), { contentType: mimeType, upsert: true })
     if (error) return null
     const { data } = supabaseAdmin.storage.from('pool-photos').getPublicUrl(path)
     return data.publicUrl
@@ -93,6 +85,7 @@ export async function POST(req: NextRequest) {
     const latForm = parseFloat(formData.get('lat') as string || '0')
     const lngForm = parseFloat(formData.get('lng') as string || '0')
     const historyRaw = formData.get('history') as string | null
+    const userId = formData.get('userId') as string | null
     const sessionId = formData.get('sessionId') as string || `anon_${Date.now()}`
 
     const photoFiles: File[] = []
@@ -100,32 +93,31 @@ export async function POST(req: NextRequest) {
       const f = formData.get(`photo${i}`) as File | null
       if (f) photoFiles.push(f)
     }
+    if (photoFiles.length === 0) return NextResponse.json({ error: 'Au moins une photo requise' }, { status: 400 })
 
-    if (photoFiles.length === 0) {
-      return NextResponse.json({ error: 'Au moins une photo requise' }, { status: 400 })
+    // Vérifier crédits si user connecté
+    if (userId) {
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('credits')
+        .eq('id', userId)
+        .single()
+      if (!profile || profile.credits < 1) {
+        return NextResponse.json({ error: 'Crédits insuffisants', code: 'NO_CREDITS' }, { status: 402 })
+      }
     }
 
-    // Traiter toutes les photos en parallèle
     const photoBuffers = await Promise.all(photoFiles.map(f => f.arrayBuffer()))
     const mimeTypes = photoFiles.map(getMimeType)
+    const folder = userId ? `users/${userId}/${sessionId}` : `anonymous/${sessionId}`
+    const photoUrls = await Promise.all(photoBuffers.map((buf, i) => uploadPhoto(buf, folder, i + 1, mimeTypes[i])))
+    const photos = photoBuffers.map((buf, i) => ({ base64: Buffer.from(buf).toString('base64'), mediaType: mimeTypes[i] }))
 
-    // Upload photos vers Supabase Storage en parallèle
-    const photoUrls = await Promise.all(
-      photoBuffers.map((buf, i) => uploadPhoto(buf, sessionId, i + 1, mimeTypes[i]))
-    )
-
-    const photos = photoBuffers.map((buf, i) => ({
-      base64: Buffer.from(buf).toString('base64'),
-      mediaType: mimeTypes[i]
-    }))
-
-    // EXIF de la première photo
     const exif = await extractExif(photoBuffers[0])
     const lat = exif?.lat || latForm
     const lng = exif?.lng || lngForm
     const photoDate = exif?.date ? new Date(exif.date) : new Date()
     const hour = photoDate.getHours()
-
     const geoData = lat && lng ? await getWeather(lat, lng) : null
     const previousAnalyses = historyRaw ? JSON.parse(historyRaw) : []
 
@@ -137,7 +129,6 @@ export async function POST(req: NextRequest) {
       sourceGPS: exif?.lat ? 'EXIF photo' : lat ? 'GPS navigateur' : 'non disponible'
     }
 
-    // Appel Claude Vision
     const diagnostic = await analyzePoolPhoto(photos, {
       season: getSeason(photoDate),
       poolVolume,
@@ -149,9 +140,7 @@ export async function POST(req: NextRequest) {
     })
 
     const diagAny = diagnostic as any
-
-    // Sauvegarder en base de données (anonyme)
-    await supabaseAdmin.from('anonymous_analyses').insert({
+    const analysisData = {
       session_id: sessionId,
       photo_urls: photoUrls.filter(Boolean),
       diagnostic,
@@ -162,7 +151,22 @@ export async function POST(req: NextRequest) {
       photo_count: photos.length,
       score: diagAny.score_global || null,
       etat: diagAny.etat || null
-    })
+    }
+
+    // Sauvegarder selon contexte
+    if (userId) {
+      await Promise.all([
+        supabaseAdmin.from('analyses').insert({ ...analysisData, user_id: userId }),
+        supabaseAdmin.from('profiles').update({ credits: supabaseAdmin.rpc as any }).eq('id', userId)
+      ])
+      // Décrémenter les crédits
+      const { data: profile } = await supabaseAdmin.from('profiles').select('credits').eq('id', userId).single()
+      if (profile) {
+        await supabaseAdmin.from('profiles').update({ credits: profile.credits - 1 }).eq('id', userId)
+      }
+    } else {
+      await supabaseAdmin.from('anonymous_analyses').insert(analysisData)
+    }
 
     return NextResponse.json({
       diagnostic,
