@@ -40,104 +40,74 @@ export async function analyzePoolPhoto(
 ): Promise<object> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  const weatherBlock = context.weather ? `
-METEO ACTUELLE :
-- Temperature air : ${context.weather.temp_air}C
-- Temperature eau estimee : ${context.weather.temp_water_estimated}C
-- Humidite : ${context.weather.humidity}%
-- Conditions : ${context.weather.description}
-- Pluies ces 7 derniers jours : ${context.weather.rain_last_7d}mm
-IMPACT : Une eau chaude accelere la croissance des algues et consomme plus de chlore. Les fortes pluies diluent les traitements.` : ''
+  const vol = context.poolVolume
 
-  const locationBlock = context.location ? `
-LOCALISATION : ${context.location.city}, ${context.location.country}` : ''
-
-  const metaBlock = context.photoMeta ? `
-METADONNEES PHOTO :
-- Photo prise le : ${context.photoMeta.date} (${context.photoMeta.jourSemaine})
-- Heure : ${context.photoMeta.heure} (${context.photoMeta.momentJournee})
-- Source GPS : ${context.photoMeta.sourceGPS}
-IMPACT : En apres-midi avec soleil fort, le chlore se degrade rapidement. Le week-end, charge bacterienne plus elevee.` : ''
-
-  const historyBlock = context.previousAnalyses?.length ? `
-HISTORIQUE :
-${context.previousAnalyses.map(a => `- ${a.date} : score ${a.score}/10 (${a.etat}) — ${a.resume} — Problemes: ${a.problemes.join(', ') || 'aucun'}`).join('\n')}
-IMPORTANT : Si les problemes persistent, intensifie le traitement. Si l'eau s'ameliore, confirme la progression.` : `
-PREMIERE ANALYSE de cette piscine.`
+  const contextLines = [
+    `Saison: ${context.season}`,
+    `Volume piscine: ${vol}m3`,
+    context.weather ? `Meteo: ${context.weather.temp_air}C, ${context.weather.description}, humidite ${context.weather.humidity}%, eau estimee ${context.weather.temp_water_estimated}C` : '',
+    context.location ? `Lieu: ${context.location.city} ${context.location.country}` : '',
+    context.photoMeta ? `Photo prise le ${context.photoMeta.date} a ${context.photoMeta.heure} (${context.photoMeta.momentJournee})` : '',
+    context.previousAnalyses?.length
+      ? `Historique: ${context.previousAnalyses.slice(0, 3).map(a => `${a.date} score ${a.score}/10 ${a.etat}`).join(' | ')}`
+      : 'Premiere analyse',
+    `Nombre de photos: ${photos.length}`
+  ].filter(Boolean).join('\n')
 
   const imageBlocks: Anthropic.ImageBlockParam[] = photos.map(p => ({
     type: 'image',
     source: { type: 'base64', media_type: p.mediaType, data: p.base64 }
   }))
 
-  const photoDesc = photos.length === 1
-    ? '1 photo (vue generale)'
-    : photos.length === 2
-    ? '2 photos (vue generale + vue rapprochee)'
-    : `${photos.length} photos (vue generale, vue rapprochee, vue de cote) — analyse croisee de toutes les vues`
-
   const response = await client.messages.create({
     model: 'claude-opus-4-5',
-    max_tokens: 2000,
-    system: `Tu es un expert pisciniste avec 20 ans d'experience. Tu connais parfaitement les produits europeens : Bayrol, Zodiac, HTH, AstralPool, BWT, Biopool, Ocedis, Mareva, Pontaqua.
-
-Quand tu recommandes un traitement, tu calcules TOUJOURS le dosage exact pour le volume de piscine indique.
-Tu cites le nom exact du produit commercial, le dosage calcule au gramme ou millilitre pres, la raison chimique, le moment ideal et les precautions.
-Tu tiens compte de toutes les photos pour croiser les observations et affiner le diagnostic.
-
-Tu reponds UNIQUEMENT en JSON brut valide, sans markdown, sans backticks. Commence par { et termine par }.`,
-
+    max_tokens: 4000,
+    system: `Tu es un expert pisciniste. Reponds UNIQUEMENT en JSON brut valide sans markdown ni backticks. Commence par { et termine par }. Sois concis dans les textes, max 100 caracteres par champ texte.`,
     messages: [{
       role: 'user',
       content: [
         ...imageBlocks,
         {
           type: 'text',
-          text: `Analyse ces photos de piscine (${photoDesc}).
+          text: `Analyse ces photos de piscine.
 
-CONTEXTE COMPLET :
-- Saison : ${context.season}
-- Volume de la piscine : ${context.poolVolume} m3 (utilise ce volume EXACT pour calculer tous les dosages)
-${weatherBlock}
-${locationBlock}
-${metaBlock}
-${historyBlock}
+CONTEXTE:
+${contextLines}
 
-INSTRUCTIONS DOSAGE : Pour chaque produit, calcule la dose exacte pour ${context.poolVolume}m3.
-Exemple : si la dose standard est 200g/50m3, pour ${context.poolVolume}m3 = ${Math.round(context.poolVolume * 200 / 50)}g.
+Calcule les dosages EXACTEMENT pour ${vol}m3 (base standard 50m3).
 
-Reponds avec exactement ce JSON :
+Reponds avec ce JSON:
 {
-  "score_global": <1-10>,
-  "etat": <"excellent" ou "bon" ou "attention" ou "urgent">,
-  "resume": "<phrase de 10 mots max>",
-  "impact_contexte": "<comment meteo, heure et localisation influencent cet etat>",
-  "synthese_photos": "<ce que la combinaison des ${photos.length} photos revele par rapport a une seule photo>",
+  "score_global": 7,
+  "etat": "bon",
+  "resume": "eau correcte quelques ajustements",
+  "impact_contexte": "texte court",
+  "synthese_photos": "texte court si plusieurs photos",
   "observations": {
-    "couleur": "<description precise de la couleur>",
-    "transparence": "<limpide ou legerement trouble ou trouble ou opaque>",
-    "mousse": <true ou false>,
-    "depot_visible": <true ou false>,
-    "algues_suspectees": <true ou false>
+    "couleur": "bleu clair",
+    "transparence": "limpide",
+    "mousse": false,
+    "depot_visible": false,
+    "algues_suspectees": false
   },
-  "problemes_detectes": ["<probleme avec explication chimique>"],
-  "evolution_vs_precedent": "<amelioration ou stable ou degradation ou premiere analyse>",
+  "problemes_detectes": ["probleme 1"],
+  "evolution_vs_precedent": "stable",
   "plan_action": [
     {
-      "priorite": <1, 2 ou 3>,
-      "action": "<action complete et precise>",
-      "explication": "<pourquoi ce traitement, cause chimique detaillee>",
-      "produit_recommande": "<nom commercial exact>",
-      "marque_alternative": "<equivalent autre marque>",
-      "dosage_standard": "<dose standard pour 50m3>",
-      "dosage_calcule": "<dose EXACTE calculee pour ${context.poolVolume}m3>",
-      "moment_application": "<ex: le soir apres baignade, eau en circulation 2h>",
-      "precautions": "<securite et conseils application>",
-      "delai": "<maintenant ou dans 24h ou dans 48h>"
+      "priorite": 1,
+      "action": "action courte",
+      "explication": "explication courte",
+      "produit_recommande": "Bayrol Chlorifix",
+      "marque_alternative": "HTH Granules",
+      "dosage_standard": "200g pour 50m3",
+      "dosage_calcule": "${Math.round(vol * 200 / 50)}g pour ${vol}m3",
+      "moment_application": "le soir apres baignade",
+      "precautions": "ne pas melanger",
+      "delai": "maintenant"
     }
   ],
-  "conseil_prevention": "<conseil detaille avec frequence recommandee>",
-  "prochaine_analyse_dans": "<3 jours ou 1 semaine ou 2 semaines>"
+  "conseil_prevention": "conseil court",
+  "prochaine_analyse_dans": "1 semaine"
 }`
         }
       ]
@@ -146,5 +116,13 @@ Reponds avec exactement ce JSON :
 
   let text = response.content[0].type === 'text' ? response.content[0].text : ''
   text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+
+  // S'assurer que le JSON est complet
+  const firstBrace = text.indexOf('{')
+  const lastBrace = text.lastIndexOf('}')
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    text = text.substring(firstBrace, lastBrace + 1)
+  }
+
   return JSON.parse(text)
 }
