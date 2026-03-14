@@ -28,8 +28,22 @@ interface FollowUp {
 
 const PHOTO_INSTRUCTIONS = [
   { id: 1, label: 'Vue de loin', desc: 'Toute la piscine visible', emoji: '🏊' },
-  { id: 2, label: 'Vue de près', desc: 'Surface de l\'eau en gros plan', emoji: '🔍' },
+  { id: 2, label: 'Vue de près', desc: 'Surface eau en gros plan', emoji: '🔍' },
   { id: 3, label: 'Vue de côté', desc: 'Depuis le bord, angle latéral', emoji: '↔️' },
+]
+
+const LOADING_STEPS = [
+  { pct: 5,  label: 'Envoi des photos...' },
+  { pct: 15, label: 'Lecture des métadonnées EXIF...' },
+  { pct: 25, label: 'Récupération de la météo...' },
+  { pct: 35, label: 'Géolocalisation...' },
+  { pct: 45, label: "Analyse visuelle de l'eau..." },
+  { pct: 55, label: 'Détection des problèmes...' },
+  { pct: 65, label: 'Croisement avec votre historique...' },
+  { pct: 75, label: 'Calcul des dosages pour votre piscine...' },
+  { pct: 85, label: 'Recommandations produits...' },
+  { pct: 92, label: 'Finalisation du diagnostic...' },
+  { pct: 98, label: 'Presque prêt...' },
 ]
 
 export default function Home() {
@@ -37,6 +51,8 @@ export default function Home() {
   const [poolVolume, setPoolVolume] = useState<number>(50)
   const [volumeSet, setVolumeSet] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [loadingPct, setLoadingPct] = useState(0)
+  const [loadingLabel, setLoadingLabel] = useState('')
   const [result, setResult] = useState<any>(null)
   const [weather, setWeather] = useState<any>(null)
   const [location, setLocation] = useState<any>(null)
@@ -52,6 +68,7 @@ export default function Home() {
   const [followUpPhoto, setFollowUpPhoto] = useState<{ file: File; preview: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const followUpRef = useRef<HTMLInputElement>(null)
+  const loadingTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     try {
@@ -61,6 +78,30 @@ export default function Home() {
       if (vol) { setPoolVolume(parseInt(vol)); setVolumeSet(true) }
     } catch {}
   }, [])
+
+  function startLoadingAnimation() {
+    setLoadingPct(0)
+    setLoadingLabel(LOADING_STEPS[0].label)
+    let stepIndex = 0
+
+    const tick = () => {
+      stepIndex++
+      if (stepIndex < LOADING_STEPS.length) {
+        const step = LOADING_STEPS[stepIndex]
+        setLoadingPct(step.pct)
+        setLoadingLabel(step.label)
+        const delay = stepIndex < 4 ? 600 : stepIndex < 7 ? 1200 : 1800
+        loadingTimerRef.current = setTimeout(tick, delay)
+      }
+    }
+    loadingTimerRef.current = setTimeout(tick, 600)
+  }
+
+  function stopLoadingAnimation() {
+    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current)
+    setLoadingPct(100)
+    setLoadingLabel('Diagnostic prêt !')
+  }
 
   function toggleSection(id: string) {
     setOpenSections(prev =>
@@ -109,8 +150,7 @@ export default function Home() {
     const file = e.target.files?.[0]
     if (!file || followUpSlot === null) return
     compressImage(file).then(compressed => {
-      const preview = URL.createObjectURL(compressed)
-      setFollowUpPhoto({ file: compressed, preview })
+      setFollowUpPhoto({ file: compressed, preview: URL.createObjectURL(compressed) })
     })
   }
 
@@ -146,6 +186,7 @@ export default function Home() {
   async function analyze() {
     if (photos.length < 1) return
     setLoading(true); setError(null); setFollowUps([])
+    startLoadingAnimation()
     try {
       const pos = await new Promise<GeolocationPosition>((res, rej) =>
         navigator.geolocation.getCurrentPosition(res, rej)
@@ -164,7 +205,11 @@ export default function Home() {
 
       const res = await fetch('/api/analyze', { method: 'POST', body: formData })
       const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Erreur'); return }
+
+      stopLoadingAnimation()
+      await new Promise(r => setTimeout(r, 800))
+
+      if (!res.ok) { setError(data.error || 'Erreur'); setLoading(false); return }
 
       setResult(data.diagnostic)
       setWeather(data.weather)
@@ -172,35 +217,26 @@ export default function Home() {
       setPhotoMeta(data.photoMeta)
       setOpenSections(['score', 'context', 'action_0'])
       saveAnalysis(data.diagnostic, data.weather, data.location, data.photoMeta)
-    } catch { setError('Erreur de connexion') }
-    finally { setLoading(false) }
+    } catch {
+      setError('Erreur de connexion')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function analyzeFollowUp(actionIndex: number) {
     if (!followUpPhoto) return
     const action = result.plan_action[actionIndex]
-
     setFollowUps(prev => prev.map((f, i) => i === actionIndex ? { ...f, status: 'analyzing' } : f))
-
     try {
       const formData = new FormData()
       formData.append('poolVolume', poolVolume.toString())
       formData.append('photo1', followUpPhoto.file)
       formData.append('history', JSON.stringify([{
         date: new Date().toLocaleDateString('fr-FR'),
-        score: result.score_global,
-        etat: result.etat,
-        resume: result.resume,
-        problemes: result.problemes_detectes || []
+        score: result.score_global, etat: result.etat,
+        resume: result.resume, problemes: result.problemes_detectes || []
       }]))
-      formData.append('followUpContext', JSON.stringify({
-        actionDone: action.action,
-        produitUtilise: action.produit_recommande,
-        dosageApplique: action.dosage_calcule,
-        heuresEcoulees: followUps[actionIndex]?.date
-          ? Math.round((Date.now() - new Date(followUps[actionIndex].date).getTime()) / 3600000)
-          : 0
-      }))
 
       const res = await fetch('/api/analyze', { method: 'POST', body: formData })
       const data = await res.json()
@@ -210,8 +246,7 @@ export default function Home() {
         ? { ...f, status: 'done', photo: followUpPhoto, result: data.diagnostic }
         : f
       ))
-      setFollowUpPhoto(null)
-      setFollowUpSlot(null)
+      setFollowUpPhoto(null); setFollowUpSlot(null)
       setOpenSections(prev => [...prev, `followup_${actionIndex}`])
     } catch {
       setFollowUps(prev => prev.map((f, i) => i === actionIndex ? { ...f, status: 'pending' } : f))
@@ -221,17 +256,10 @@ export default function Home() {
   function markActionDone(actionIndex: number) {
     const action = result.plan_action[actionIndex]
     setFollowUps(prev => {
-      const existing = prev.find(f => f.actionIndex === actionIndex)
-      if (existing) return prev
-      return [...prev, {
-        actionIndex,
-        actionLabel: action.action,
-        date: new Date().toISOString(),
-        status: 'pending'
-      }]
+      if (prev.find(f => f.actionIndex === actionIndex)) return prev
+      return [...prev, { actionIndex, actionLabel: action.action, date: new Date().toISOString(), status: 'pending' }]
     })
     setFollowUpSlot(actionIndex)
-    setOpenSections(prev => [...prev, `action_${actionIndex}`])
   }
 
   const getColor = (etat: string) => ({
@@ -245,7 +273,7 @@ export default function Home() {
     return '😰'
   }
 
-  const Accordion = ({ id, title, emoji, badge, badgeColor, children, defaultOpen }: any) => {
+  const Accordion = ({ id, title, emoji, badge, badgeColor, children }: any) => {
     const isOpen = openSections.includes(id)
     return (
       <div style={{ background: 'white', borderRadius: '14px', overflow: 'hidden', marginBottom: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
@@ -260,26 +288,15 @@ export default function Home() {
               </span>
             )}
           </div>
-          <span style={{ color: '#94a3b8', fontSize: '18px', transition: 'transform 0.2s', transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▾</span>
+          <span style={{ color: '#94a3b8', fontSize: '18px', transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', display: 'inline-block' }}>▾</span>
         </button>
-        {isOpen && (
-          <div style={{ padding: '0 16px 16px' }}>
-            {children}
-          </div>
-        )}
+        {isOpen && <div style={{ padding: '0 16px 16px' }}>{children}</div>}
       </div>
     )
   }
 
   const ActionCard = ({ action, index }: { action: any, index: number }) => {
     const followUp = followUps.find(f => f.actionIndex === index)
-    const isWaitingPhoto = followUpSlot === index && !followUp?.photo
-    const priorityColors = {
-      1: { bg: '#fee2e2', text: '#dc2626', border: '#fecaca' },
-      2: { bg: '#ffedd5', text: '#ea580c', border: '#fed7aa' },
-      3: { bg: '#d1fae5', text: '#16a34a', border: '#a7f3d0' }
-    }
-    const pc = priorityColors[action.priorite as 1|2|3] || priorityColors[3]
 
     return (
       <Accordion
@@ -289,82 +306,48 @@ export default function Home() {
         badge={followUp?.status === 'done' ? '✅ Fait' : action.delai}
         badgeColor={followUp?.status === 'done' ? '#d1fae5' : '#f1f5f9'}
       >
-        {/* Explication */}
         {action.explication && (
           <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
-            <p style={{ margin: 0, fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>
-              💡 {action.explication}
-            </p>
+            <p style={{ margin: 0, fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>💡 {action.explication}</p>
           </div>
         )}
 
-        {/* Produit */}
         <div style={{ background: '#f0f9ff', borderRadius: '10px', padding: '14px', marginBottom: '12px' }}>
-          <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: '700', color: '#0369a1' }}>
-            🧪 {action.produit_recommande}
-          </p>
-          {action.marque_alternative && (
-            <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#64748b' }}>
-              Alternative : {action.marque_alternative}
-            </p>
-          )}
+          <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: '700', color: '#0369a1' }}>🧪 {action.produit_recommande}</p>
+          {action.marque_alternative && <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#64748b' }}>Alternative : {action.marque_alternative}</p>}
           {action.dosage_calcule && (
             <div style={{ background: '#0ea5e9', borderRadius: '8px', padding: '10px 14px', marginBottom: '8px' }}>
-              <p style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: 'white' }}>
-                📏 {action.dosage_calcule}
-              </p>
-              {action.dosage_standard && (
-                <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>
-                  Standard 50m³ : {action.dosage_standard}
-                </p>
-              )}
+              <p style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: 'white' }}>📏 {action.dosage_calcule}</p>
+              {action.dosage_standard && <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>Standard 50m³ : {action.dosage_standard}</p>}
             </div>
           )}
-          {action.moment_application && (
-            <p style={{ margin: 0, fontSize: '13px', color: '#0c4a6e' }}>
-              🕐 {action.moment_application}
-            </p>
-          )}
+          {action.moment_application && <p style={{ margin: 0, fontSize: '13px', color: '#0c4a6e' }}>🕐 {action.moment_application}</p>}
         </div>
 
-        {/* Précautions */}
         {action.precautions && (
           <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
-            <p style={{ margin: 0, fontSize: '12px', color: '#dc2626', lineHeight: '1.5' }}>
-              ⚠️ {action.precautions}
-            </p>
+            <p style={{ margin: 0, fontSize: '12px', color: '#dc2626', lineHeight: '1.5' }}>⚠️ {action.precautions}</p>
           </div>
         )}
 
-        {/* Suivi après traitement */}
         {!followUp && (
           <button onClick={() => markActionDone(index)}
             style={{ width: '100%', padding: '12px', background: '#0c4a6e', color: 'white', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-            ✅ J'ai effectué ce traitement → Vérifier l'amélioration
+            ✅ Traitement effectué → Vérifier l'amélioration
           </button>
         )}
 
-        {/* Upload photo de suivi */}
-        {followUp && followUp.status === 'pending' && (
+        {followUp?.status === 'pending' && (
           <div style={{ marginTop: '4px' }}>
             <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
               <p style={{ margin: 0, fontSize: '13px', color: '#15803d', fontWeight: '600' }}>
-                ✅ Traitement effectué ! Attendez le temps recommandé puis prenez une photo pour vérifier l'amélioration.
+                ✅ Traitement noté ! Laissez la pompe tourner au moins 2h puis prenez une photo.
               </p>
             </div>
-
-            {action.delai === 'maintenant' && (
-              <div style={{ background: '#fef9c3', borderRadius: '8px', padding: '10px', marginBottom: '12px' }}>
-                <p style={{ margin: 0, fontSize: '13px', color: '#854d0e' }}>
-                  ⏳ Laissez circuler la pompe au moins 2h avant de reprendre une photo
-                </p>
-              </div>
-            )}
-
-            {!followUpPhoto ? (
+            {!followUpPhoto || followUpSlot !== index ? (
               <button onClick={() => { setFollowUpSlot(index); setTimeout(() => followUpRef.current?.click(), 50) }}
                 style={{ width: '100%', padding: '14px', background: 'white', border: '2px dashed #0ea5e9', borderRadius: '12px', color: '#0ea5e9', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-                📸 Prendre une photo pour vérifier
+                📸 Prendre une photo de vérification
               </button>
             ) : (
               <div>
@@ -391,16 +374,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Résultat du suivi */}
         {followUp?.status === 'done' && followUp.result && (
-          <div id={`followup_${index}`} style={{ marginTop: '8px' }}>
+          <div style={{ marginTop: '8px' }}>
             <div style={{ height: '1px', background: '#e2e8f0', marginBottom: '14px' }} />
-            <p style={{ fontSize: '13px', color: '#64748b', fontWeight: '600', marginBottom: '10px' }}>
-              📊 Résultat après traitement :
-            </p>
-            {followUp.photo && (
-              <img src={followUp.photo.preview} alt="" style={{ width: '100%', borderRadius: '10px', objectFit: 'cover', maxHeight: '160px', marginBottom: '12px' }} />
-            )}
+            <p style={{ fontSize: '13px', color: '#64748b', fontWeight: '600', marginBottom: '10px' }}>📊 Résultat après traitement :</p>
+            {followUp.photo && <img src={followUp.photo.preview} alt="" style={{ width: '100%', borderRadius: '10px', objectFit: 'cover', maxHeight: '160px', marginBottom: '12px' }} />}
             <div style={{ background: getColor(followUp.result.etat), borderRadius: '12px', padding: '16px', color: 'white', textAlign: 'center', marginBottom: '12px' }}>
               <div style={{ fontSize: '36px', fontWeight: '800' }}>{followUp.result.score_global}/10</div>
               <div style={{ fontSize: '16px', fontWeight: '600', marginTop: '4px', textTransform: 'capitalize' }}>{followUp.result.etat}</div>
@@ -411,14 +389,12 @@ export default function Home() {
                 </div>
               )}
             </div>
-            {followUp.result.plan_action?.length > 0 && (
+            {followUp.result.plan_action?.[0] && (
               <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '12px' }}>
-                <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '700', color: '#0c4a6e' }}>Prochaine étape recommandée :</p>
-                <p style={{ margin: 0, fontSize: '13px', color: '#475569' }}>
-                  {followUp.result.plan_action[0]?.action}
-                </p>
-                {followUp.result.plan_action[0]?.produit_recommande && (
-                  <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#0369a1', fontWeight: '600' }}>
+                <p style={{ margin: '0 0 6px', fontSize: '13px', fontWeight: '700', color: '#0c4a6e' }}>Prochaine étape :</p>
+                <p style={{ margin: '0 0 6px', fontSize: '13px', color: '#475569' }}>{followUp.result.plan_action[0].action}</p>
+                {followUp.result.plan_action[0].produit_recommande && (
+                  <p style={{ margin: 0, fontSize: '13px', color: '#0369a1', fontWeight: '600' }}>
                     🧪 {followUp.result.plan_action[0].produit_recommande} — {followUp.result.plan_action[0].dosage_calcule}
                   </p>
                 )}
@@ -432,8 +408,6 @@ export default function Home() {
 
   const DiagnosticView = ({ r, w, l, m }: { r: any, w?: any, l?: any, m?: any }) => (
     <div style={{ marginTop: '16px' }}>
-
-      {/* Score — toujours ouvert */}
       <Accordion id="score" emoji={getScoreEmoji(r.score_global)} title="Score & état général" badge={`${r.score_global}/10`} badgeColor={getColor(r.etat)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px' }}>
           <div style={{ background: getColor(r.etat), borderRadius: '14px', padding: '14px 20px', textAlign: 'center', minWidth: '80px' }}>
@@ -444,16 +418,14 @@ export default function Home() {
             <p style={{ margin: '0 0 4px', fontWeight: '700', color: '#0c4a6e', fontSize: '16px', textTransform: 'capitalize' }}>{r.etat}</p>
             <p style={{ margin: 0, color: '#475569', fontSize: '14px', lineHeight: '1.5' }}>{r.resume}</p>
             {r.evolution_vs_precedent && r.evolution_vs_precedent !== 'premiere analyse' && (
-              <p style={{ margin: '6px 0 0', fontSize: '13px', color: r.evolution_vs_precedent === 'amelioration' ? '#16a34a' : r.evolution_vs_precedent === 'degradation' ? '#dc2626' : '#64748b', fontWeight: '600' }}>
+              <p style={{ margin: '6px 0 0', fontSize: '13px', fontWeight: '600', color: r.evolution_vs_precedent === 'amelioration' ? '#16a34a' : r.evolution_vs_precedent === 'degradation' ? '#dc2626' : '#64748b' }}>
                 {r.evolution_vs_precedent === 'amelioration' ? '📈 En amélioration' : r.evolution_vs_precedent === 'degradation' ? '📉 En dégradation' : '➡️ Stable'} vs analyse précédente
               </p>
             )}
           </div>
         </div>
-
-        {/* Jauge visuelle */}
         <div style={{ background: '#f1f5f9', borderRadius: '20px', height: '10px', overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${r.score_global * 10}%`, background: getColor(r.etat), borderRadius: '20px', transition: 'width 1s ease' }} />
+          <div style={{ height: '100%', width: `${r.score_global * 10}%`, background: getColor(r.etat), borderRadius: '20px' }} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
           <span style={{ fontSize: '11px', color: '#94a3b8' }}>Urgent</span>
@@ -461,22 +433,11 @@ export default function Home() {
         </div>
       </Accordion>
 
-      {/* Contexte météo */}
       {(w || l || m) && (
         <Accordion id="context" emoji="🌤️" title="Contexte & météo">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {l && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: '#f8fafc', borderRadius: '8px' }}>
-                <span style={{ fontSize: '18px' }}>📍</span>
-                <span style={{ fontSize: '14px', color: '#374151' }}>{l.city}, {l.country}</span>
-              </div>
-            )}
-            {m && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: '#f8fafc', borderRadius: '8px' }}>
-                <span style={{ fontSize: '18px' }}>🕐</span>
-                <span style={{ fontSize: '14px', color: '#374151' }}>Photo prise le {m.date} à {m.heure} ({m.momentJournee})</span>
-              </div>
-            )}
+            {l && <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: '#f8fafc', borderRadius: '8px' }}><span>📍</span><span style={{ fontSize: '14px', color: '#374151' }}>{l.city}, {l.country}</span></div>}
+            {m && <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: '#f8fafc', borderRadius: '8px' }}><span>🕐</span><span style={{ fontSize: '14px', color: '#374151' }}>Photo le {m.date} à {m.heure} ({m.momentJournee})</span></div>}
             {w && (
               <>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
@@ -496,30 +457,23 @@ export default function Home() {
             )}
             {r.impact_contexte && (
               <div style={{ padding: '10px 12px', background: '#fefce8', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '13px', color: '#92400e', lineHeight: '1.5' }}>
-                  💡 {r.impact_contexte}
-                </p>
+                <p style={{ margin: 0, fontSize: '13px', color: '#92400e', lineHeight: '1.5' }}>💡 {r.impact_contexte}</p>
               </div>
             )}
           </div>
         </Accordion>
       )}
 
-      {/* Observations */}
       <Accordion id="observations" emoji="👁️" title="Observations visuelles">
         {r.synthese_photos && (
           <div style={{ background: '#f5f3ff', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
-            <p style={{ margin: 0, fontSize: '13px', color: '#5b21b6', lineHeight: '1.5' }}>
-              📸 {r.synthese_photos}
-            </p>
+            <p style={{ margin: 0, fontSize: '13px', color: '#5b21b6', lineHeight: '1.5' }}>📸 {r.synthese_photos}</p>
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
           {Object.entries(r.observations || {}).map(([key, val]) => (
             <div key={key} style={{ background: '#f8fafc', borderRadius: '10px', padding: '12px', border: `1px solid ${typeof val === 'boolean' && val ? '#fecaca' : '#f1f5f9'}` }}>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                {key.replace(/_/g, ' ')}
-              </div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{key.replace(/_/g, ' ')}</div>
               <div style={{ fontWeight: '600', color: '#0c4a6e', fontSize: '14px', marginTop: '4px' }}>
                 {typeof val === 'boolean' ? (val ? '⚠️ Oui' : '✅ Non') : String(val)}
               </div>
@@ -528,7 +482,6 @@ export default function Home() {
         </div>
       </Accordion>
 
-      {/* Problèmes */}
       {r.problemes_detectes?.length > 0 && (
         <Accordion id="problems" emoji="⚠️" title="Problèmes détectés" badge={r.problemes_detectes.length.toString()} badgeColor="#fee2e2">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -542,7 +495,6 @@ export default function Home() {
         </Accordion>
       )}
 
-      {/* Plan d'action — chaque action est son propre accordéon */}
       {r.plan_action?.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '20px 0 12px' }}>
@@ -556,23 +508,15 @@ export default function Home() {
         </div>
       )}
 
-      {/* Prévention */}
       <Accordion id="prevention" emoji="🛡️" title="Conseils de prévention">
-        <p style={{ margin: 0, color: '#374151', fontSize: '14px', lineHeight: '1.7' }}>
-          {r.conseil_prevention}
-        </p>
+        <p style={{ margin: 0, color: '#374151', fontSize: '14px', lineHeight: '1.7' }}>{r.conseil_prevention}</p>
       </Accordion>
 
-      {/* Prochaine analyse */}
       <div style={{ background: 'white', borderRadius: '14px', padding: '16px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginTop: '10px' }}>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '13px' }}>
-          📅 Prochaine analyse recommandée dans
-        </p>
-        <p style={{ margin: '4px 0 0', fontWeight: '800', color: '#0c4a6e', fontSize: '18px' }}>
-          {r.prochaine_analyse_dans}
-        </p>
+        <p style={{ margin: 0, color: '#64748b', fontSize: '13px' }}>📅 Prochaine analyse recommandée dans</p>
+        <p style={{ margin: '4px 0 12px', fontWeight: '800', color: '#0c4a6e', fontSize: '18px' }}>{r.prochaine_analyse_dans}</p>
         <button onClick={() => { setPhotos([]); setResult(null); setFollowUps([]); window.scrollTo(0, 0) }}
-          style={{ marginTop: '12px', padding: '10px 20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', color: '#0369a1', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>
+          style={{ padding: '10px 20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', color: '#0369a1', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>
           📸 Nouvelle analyse
         </button>
       </div>
@@ -581,6 +525,87 @@ export default function Home() {
 
   return (
     <main style={{ minHeight: '100vh', background: '#f0f9ff', fontFamily: 'system-ui, sans-serif', paddingBottom: '80px' }}>
+
+      {/* LOADING OVERLAY */}
+      {loading && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(12, 74, 110, 0.97)',
+          zIndex: 1000,
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          padding: '40px 30px'
+        }}>
+          {/* Icône piscine animée */}
+          <div style={{ fontSize: '64px', marginBottom: '24px', animation: 'pulse 2s ease-in-out infinite' }}>
+            🏊
+          </div>
+
+          {/* Titre */}
+          <h2 style={{ color: 'white', fontSize: '22px', fontWeight: '800', margin: '0 0 8px', textAlign: 'center' }}>
+            Analyse en cours...
+          </h2>
+          <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '14px', margin: '0 0 40px', textAlign: 'center' }}>
+            Ne fermez pas cette page
+          </p>
+
+          {/* Pourcentage */}
+          <div style={{ fontSize: '56px', fontWeight: '800', color: 'white', lineHeight: 1, marginBottom: '8px' }}>
+            {loadingPct}%
+          </div>
+
+          {/* Barre de progression */}
+          <div style={{ width: '100%', maxWidth: '320px', height: '8px', background: 'rgba(255,255,255,0.2)', borderRadius: '20px', overflow: 'hidden', marginBottom: '20px' }}>
+            <div style={{
+              height: '100%',
+              width: `${loadingPct}%`,
+              background: 'linear-gradient(90deg, #38bdf8, #0ea5e9)',
+              borderRadius: '20px',
+              transition: 'width 0.6s ease'
+            }} />
+          </div>
+
+          {/* Étape en cours */}
+          <p style={{
+            color: 'rgba(255,255,255,0.85)',
+            fontSize: '15px',
+            fontWeight: '500',
+            textAlign: 'center',
+            minHeight: '24px',
+            transition: 'opacity 0.3s'
+          }}>
+            {loadingLabel}
+          </p>
+
+          {/* Photos miniatures */}
+          {photos.length > 0 && (
+            <div style={{ display: 'flex', gap: '10px', marginTop: '32px' }}>
+              {photos.map((p, i) => (
+                <div key={i} style={{ position: 'relative' }}>
+                  <img src={p.preview} alt="" style={{ width: '60px', height: '60px', borderRadius: '10px', objectFit: 'cover', opacity: 0.7, border: '2px solid rgba(255,255,255,0.3)' }} />
+                  <div style={{ position: 'absolute', bottom: '-6px', left: '50%', transform: 'translateX(-50%)', background: '#0ea5e9', borderRadius: '10px', padding: '1px 6px' }}>
+                    <span style={{ color: 'white', fontSize: '9px', fontWeight: '700' }}>#{i + 1}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Conseil pendant l'attente */}
+          <div style={{ marginTop: '36px', background: 'rgba(255,255,255,0.1)', borderRadius: '14px', padding: '14px 18px', maxWidth: '320px', textAlign: 'center' }}>
+            <p style={{ margin: 0, color: 'rgba(255,255,255,0.8)', fontSize: '13px', lineHeight: '1.6' }}>
+              💡 L'IA analyse la couleur, la transparence et croise avec la météo de votre région pour un diagnostic précis.
+            </p>
+          </div>
+
+          <style>{`
+            @keyframes pulse {
+              0%, 100% { transform: scale(1); }
+              50% { transform: scale(1.1); }
+            }
+          `}</style>
+        </div>
+      )}
 
       <header style={{ background: 'white', borderBottom: '1px solid #e0f2fe', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
         <span style={{ fontWeight: '700', color: '#0c4a6e', fontSize: '18px' }}>🏊 Pool Water AI</span>
@@ -596,21 +621,18 @@ export default function Home() {
         ))}
       </div>
 
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
       <input ref={followUpRef} type="file" accept="image/*" capture="environment" onChange={handleFollowUpPhoto} style={{ display: 'none' }} />
 
       <div style={{ maxWidth: '480px', margin: '0 auto', padding: '20px' }}>
 
         {view === 'analyze' && (
           <>
-            {/* Volume */}
             {!result && (
               <div style={{ background: 'white', borderRadius: '16px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                   <h3 style={{ margin: 0, color: '#0c4a6e', fontSize: '16px' }}>💧 Volume de votre piscine</h3>
-                  {volumeSet && (
-                    <button onClick={() => setVolumeSet(false)}
-                      style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '13px', cursor: 'pointer' }}>Modifier</button>
-                  )}
+                  {volumeSet && <button onClick={() => setVolumeSet(false)} style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '13px', cursor: 'pointer' }}>Modifier</button>}
                 </div>
                 {!volumeSet ? (
                   <>
@@ -640,25 +662,19 @@ export default function Home() {
                       <span style={{ fontSize: '28px', fontWeight: '800', color: '#0369a1' }}>{poolVolume}</span>
                       <span style={{ fontSize: '14px', color: '#0369a1', marginLeft: '4px' }}>m³</span>
                     </div>
-                    <p style={{ fontSize: '13px', color: '#64748b', margin: 0, lineHeight: '1.5' }}>
-                      Dosages calculés précisément pour {poolVolume}m³
-                    </p>
+                    <p style={{ fontSize: '13px', color: '#64748b', margin: 0, lineHeight: '1.5' }}>Dosages calculés précisément pour {poolVolume}m³</p>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Photos */}
             {volumeSet && !result && (
               <>
                 <div style={{ marginBottom: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                     <h3 style={{ margin: 0, color: '#0c4a6e', fontSize: '16px' }}>📸 Photos de la piscine</h3>
-                    <span style={{ fontSize: '13px', color: photos.length >= 3 ? '#16a34a' : '#f59e0b', fontWeight: '600' }}>
-                      {photos.length}/3 {photos.length >= 3 ? '✅' : ''}
-                    </span>
+                    <span style={{ fontSize: '13px', color: photos.length >= 3 ? '#16a34a' : '#f59e0b', fontWeight: '600' }}>{photos.length}/3 {photos.length >= 3 ? '✅' : ''}</span>
                   </div>
-
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '12px' }}>
                     {PHOTO_INSTRUCTIONS.map((slot, index) => (
                       <div key={slot.id}>
@@ -683,7 +699,6 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
-
                   {photos.length === 0 && (
                     <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px' }}>
                       <p style={{ margin: 0, fontSize: '13px', color: '#0369a1' }}>📸 3 vues différentes = diagnostic plus précis. Min. 1 photo requise.</p>
@@ -696,14 +711,12 @@ export default function Home() {
                   )}
                 </div>
 
-                <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
-
-                <button onClick={analyze} disabled={photos.length < 1 || loading}
-                  style={{ width: '100%', padding: '16px', background: photos.length >= 1 ? '#0ea5e9' : '#cbd5e1', color: 'white', border: 'none', borderRadius: '14px', fontSize: '17px', fontWeight: '700', cursor: photos.length >= 1 ? 'pointer' : 'not-allowed', marginBottom: '12px', opacity: loading ? 0.8 : 1 }}>
-                  {loading ? '⏳ Analyse en cours...' : photos.length >= 3 ? `🔬 Analyser (${photos.length} photos — ${poolVolume}m³)` : photos.length > 0 ? `🔬 Analyser avec ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '📸 Ajoutez au moins 1 photo'}
+                <button onClick={analyze} disabled={photos.length < 1}
+                  style={{ width: '100%', padding: '16px', background: photos.length >= 1 ? '#0ea5e9' : '#cbd5e1', color: 'white', border: 'none', borderRadius: '14px', fontSize: '17px', fontWeight: '700', cursor: photos.length >= 1 ? 'pointer' : 'not-allowed', marginBottom: '12px' }}>
+                  {photos.length >= 3 ? `🔬 Analyser (${photos.length} photos — ${poolVolume}m³)` : photos.length > 0 ? `🔬 Analyser avec ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '📸 Ajoutez au moins 1 photo'}
                 </button>
 
-                {history.length > 0 && !loading && (
+                {history.length > 0 && (
                   <p style={{ textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
                     🧠 {history.length} analyse{history.length > 1 ? 's' : ''} dans l'historique — l'IA en tient compte
                   </p>
@@ -721,7 +734,6 @@ export default function Home() {
           </>
         )}
 
-        {/* Historique liste */}
         {view === 'history' && !selectedAnalysis && (
           <>
             {history.length === 0
@@ -731,9 +743,7 @@ export default function Home() {
                   <p style={{ fontSize: '14px' }}>Faites votre première analyse !</p>
                 </div>
               : <>
-                  <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
-                    {history.length} analyse{history.length > 1 ? 's' : ''} sauvegardée{history.length > 1 ? 's' : ''}
-                  </p>
+                  <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>{history.length} analyse{history.length > 1 ? 's' : ''} sauvegardée{history.length > 1 ? 's' : ''}</p>
                   {history.map(a => (
                     <div key={a.id} onClick={() => setSelectedAnalysis(a)}
                       style={{ background: 'white', borderRadius: '16px', padding: '16px', marginBottom: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', cursor: 'pointer', display: 'flex', gap: '14px', alignItems: 'center', border: '1px solid #f1f5f9' }}>
@@ -758,7 +768,6 @@ export default function Home() {
           </>
         )}
 
-        {/* Historique détail */}
         {view === 'history' && selectedAnalysis && (
           <>
             <button onClick={() => setSelectedAnalysis(null)}
